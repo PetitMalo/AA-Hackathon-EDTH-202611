@@ -1,12 +1,15 @@
-"""Participant entry point. Replace act() with your own policy."""
+"""Participant entry point: voxel-map frontier exploration, then go to the detected target."""
 
-import numpy as np
+from handin.explorer import FrontierExplorer
 
 
 class Agent:
+    def __init__(self):
+        self.explorer = FrontierExplorer()
+
     def reset(self):
-        pass
+        self.explorer.reset()
 
     def act(self, observation):
-        # Hover in place as a minimal valid example.
-        return np.zeros(4, dtype=np.float32)
+        # One iteration: update the voxel map, pick target / nearest frontier, return (roll, pitch, yaw, throttle).
+        return self.explorer.step(observation)
