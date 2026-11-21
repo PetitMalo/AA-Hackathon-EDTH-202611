@@ -79,6 +79,9 @@ class CheckpointCallback(BaseCallback):
         export_policy(self.model, self.out / "policy.pt")
         print(f"[checkpoint] {n} pas -> {self.out / 'policy.pt'}", flush=True)
 
+    def _on_training_start(self):           # --resume : prochain multiple de `every` après le compteur repris
+        self.next = (self.num_timesteps // self.every + 1) * self.every
+
     def _on_step(self):
         if self.num_timesteps >= self.next:
             self._save()
@@ -137,7 +140,10 @@ def main():
         model.save(out / "ckpt" / "model_interrupted.zip")
         export_policy(model, out / "policy.pt")
     finally:
-        venv.close()
+        try:
+            venv.close()
+        except (EOFError, BrokenPipeError, ConnectionResetError):   # workers déjà tués par le Ctrl-C
+            pass
 
 
 if __name__ == "__main__":

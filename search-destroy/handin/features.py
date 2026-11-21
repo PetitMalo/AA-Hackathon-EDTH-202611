@@ -28,14 +28,21 @@ CAM_IN_BODY = np.array([[np.cos(TILT), 0., -np.sin(TILT)],      # colonnes : ava
 MAX_DEPTH = 40.
 DETECT_RANGE = 250.
 BOX_HALF_H = .775
+BOX_MIN_DIM = 1.55                       # boîte 4 x 1,65 x 1,55 m (target_box.urdf)
+DET_F_PX = 80. / np.tan(HFOV / 2)        # focale de la caméra de détection 160 x 90, en pixels
 
 
 def _pixel_rays(w, h, cols, rows):
-    """Directions (avant, gauche, haut) en repère caméra, avant = 1 (profondeur planaire)."""
+    """Directions (avant, gauche, haut) en repère caméra, avant = 1 (profondeur planaire).
+
+    cols, rows : indices de pixel (fractionnaires acceptés). Convention de rendu PyBullet mesurée
+    par raycast : le pixel (row, col) vise x = col, y = row + 1 (et non les centres col + .5, row + .5).
+    Avec cette convention, depth -> 3D coïncide avec rayTestBatch à ~1 mm près (au lieu de ~0,2-0,6 m).
+    """
     th = np.tan(HFOV / 2)
     tv = th * h / w
-    x = 2 * (np.asarray(cols) + .5) / w - 1
-    y = 1 - 2 * (np.asarray(rows) + .5) / h
+    x = 2 * np.asarray(cols, np.float64) / w - 1
+    y = 1 - 2 * (np.asarray(rows, np.float64) + 1) / h
     return np.stack([np.ones_like(x * y), -x * th, y * tv], axis=-1)
 
 
@@ -186,15 +193,21 @@ class Features:
         if not obs["detected"]:
             return
         self.last_box, self.since_det, self.ever_det = box.copy(), 0., 1.
+        if self.est.t <= 3:          # yaw initial = cap vers (0, 0) à ±20°, recalé seulement à t = 3 (estimator)
+            return
         cx, cy = (box[0] + box[2]) / 2 * 160, (box[1] + box[3]) / 2 * 90
-        ray = R_cam @ _pixel_rays(160, 90, cx - .5, cy - .5)              # box en coordonnées pixel
+        ray = R_cam @ _pixel_rays(160, 90, cx, cy)                        # centre de la box (indices inclusifs)
         u = ray / np.linalg.norm(ray)
         # profondeur dans la box si la cible est proche
         r0, r1 = int(box[1] * D_H), int(np.ceil(box[3] * D_H)) + 1
         c0, c1 = int(box[0] * D_W), int(np.ceil(box[2] * D_W)) + 1
         patch = depth[r0:r1, c0:c1]
         dmed = float(np.median(patch)) if patch.size else MAX_DEPTH
-        if dmed < MAX_DEPTH - 2:
+        # la depth n'est crédible que si la taille apparente de la box est compatible avec dmed :
+        # une box de 1-2 px (cible lointaine) dont le patch touche un obstacle proche donnerait sinon
+        # une mesure fausse de ~150 m annoncée à sigma 1,5 m, qui fige le filtre.
+        size_px = max((box[2] - box[0]) * 160 + 1, (box[3] - box[1]) * 90 + 1)
+        if dmed < MAX_DEPTH - 2 and size_px * dmed / DET_F_PX >= .8 * BOX_MIN_DIM:
             p = eye + ray * dmed                                           # ray a avant = 1 : profondeur planaire
             sig = max(1.5, .05 * dmed)      # la depth touche la face de la boîte (4 m de long), pas son centre
             self.target.update(p[:2], np.eye(2) * sig**2)
