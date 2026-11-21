@@ -78,7 +78,8 @@ class ControlConfig:
     clutter_box_clear_m: float = 3.         # voxels this close to the box estimate are the box itself, not obstacles
     speed_gain: float = 0.5            # v_des = min(v_max, gain * distance)
     vel_gain: float = 1.5              # 1/s, velocity error -> acceleration
-    max_tilt_deg: float = 50.
+    max_tilt_deg: float = 50.          # TOTAL tilt (roll and pitch combined), the horizontal acceleration is
+                                       # scaled down along its own direction when it would need more
     max_stick_deg: float = 60.         # full stick = 60 deg (ApproachAviary)
     yaw_gain: float = 0.8              # stick per rad of heading error
     alt_kp: float = 1.2
@@ -146,6 +147,41 @@ class MPCConfig:
 
 
 @dataclass
+class EscapeConfig:
+    """Exploration only: detect that the drone is stuck (city: frontiers behind buildings, blocked corridor,
+    hover) and escape with a graded response: 1) re-plan with a wide blacklist, 2) yaw scan in place,
+    3) climb above the rooftops (~20 m max in the city) and widen the frontier altitude band for a while."""
+    enabled: bool = True
+    # --- stuck detection (ProgressMonitor)
+    window_s: float = 8.               # displacement measured over this sliding window
+    min_disp_m: float = 8.             # net horizontal displacement over the window below this -> stuck
+    blocked_speed_m_s: float = 1.      # corridor blocked AND horizontal speed below this ...
+    blocked_s: float = 1.5             # ... for this long -> stuck (no need to wait for the frontier commit timeout)
+    clutter_radius_m: float = 10.      # obstacles (connected voxel groups) counted this close to the drone
+    clutter_count: int = 6             # this many or more = cluttered ...
+    clutter_min_disp_m: float = 15.    # ... and then a displacement below this over the window -> stuck
+    clutter_every: int = 15            # frames between two obstacle counts (cost)
+    cooldown_s: float = 4.             # no new trigger this long after an escape step ends
+    escalation_reset_s: float = 30.    # a trigger this long after the previous one starts again at level 1
+    # --- level 1: re-plan
+    blacklist_radius_m: float = 20.    # around the abandoned goal and around where the drone was stuck
+    blacklist_s: float = 45.
+    # --- level 2: yaw scan in place (holds position, turns the nose: the camera fills the unknown around)
+    scan_s: float = 2.5
+    scan_yaw_stick: float = 0.8        # 0.8 -> 160 deg/s, a full turn in ~2.3 s
+    # --- level 3: climb
+    climb_alt_m: float = 26.           # above the highest building (~20 m), below the map ceiling (40 m)
+    climb_speed_m_s: float = 4.
+    climb_tol_m: float = 1.5
+    climb_timeout_s: float = 10.
+    climb_stall_s: float = 2.          # vertical speed below climb_stall_speed this long (after 1 s) -> abort
+    climb_stall_speed_m_s: float = 0.3
+    column_half_width_m: float = 2.    # the column above the drone must hold no OCCUPIED voxel (roof, canopy)
+    widen_z_band_m: tuple = (3., 30.)  # after a climb, frontiers in this band for widen_s
+    widen_s: float = 20.
+
+
+@dataclass
 class ExplorerConfig:
     dt: float = 1. / 30.
     g: float = 9.8
@@ -159,7 +195,9 @@ class ExplorerConfig:
     attack: AttackConfig = field(default_factory=AttackConfig)
     corridor: CorridorConfig = field(default_factory=CorridorConfig)
     mpc: MPCConfig = field(default_factory=MPCConfig)
+    escape: EscapeConfig = field(default_factory=EscapeConfig)
     # Evaluator flight phases: the mission latches from "exploration" to "terminal" the first time
     # the policy reports its target mode (see fpv_sim.scripts.evaluate).
     phase_of_mode: dict = field(default_factory=lambda: {"explore": "exploration", "hover": "exploration",
+                                                         "scan": "exploration", "climb": "exploration",
                                                          "target": "terminal", "attack": "terminal"})

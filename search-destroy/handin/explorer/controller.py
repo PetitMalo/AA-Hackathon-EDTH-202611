@@ -75,8 +75,14 @@ class WaypointController:
         a_fwd = cy * a[0] + sy * a[1]
         a_left = -sy * a[0] + cy * a[1]
         a_up = max(self.g + a[2], 0.3 * self.g)
-        thrust = np.sqrt(a_fwd ** 2 + a_left ** 2 + a_up ** 2)
         max_tilt = np.radians(c.max_tilt_deg if tilt_deg is None else tilt_deg)
+        # Joint tilt limit: the total tilt of the thrust vector is atan(|a_h| / a_up). Past max_tilt, scale
+        # the horizontal acceleration down ALONG ITS DIRECTION (clipping roll and pitch one by one would
+        # bend it, e.g. a braking turn would lose its braking share, and allow up to ~60 deg in total).
+        a_h, a_h_max = np.hypot(a_fwd, a_left), a_up * np.tan(max_tilt)
+        if a_h > a_h_max:
+            a_fwd, a_left = a_fwd * a_h_max / a_h, a_left * a_h_max / a_h
+        thrust = np.sqrt(a_fwd ** 2 + a_left ** 2 + a_up ** 2)
         pitch = np.clip(np.arctan2(a_fwd, a_up), -max_tilt, max_tilt)
         roll = np.clip(-np.arcsin(np.clip(a_left / thrust, -1, 1)), -max_tilt, max_tilt)
         throttle = a_up / (np.cos(pitch) * np.cos(roll)) / self.g - 1.

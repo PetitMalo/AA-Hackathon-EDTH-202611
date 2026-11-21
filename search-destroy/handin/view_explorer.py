@@ -21,7 +21,8 @@ from handin.run_explorer import map_rgb
 
 FPV_SIZE = (640, 360)
 MAP_PX = 600
-MODE_COLOURS = {"init": "gray", "explore": "deepskyblue", "target": "orange", "attack": "red", "hover": "yellow"}
+MODE_COLOURS = {"init": "gray", "explore": "deepskyblue", "target": "orange", "attack": "red", "hover": "yellow",
+                "scan": "violet", "climb": "springgreen"}
 
 
 class Viewer:
@@ -113,12 +114,14 @@ class Viewer:
             (f"frontiers {ex.n_frontiers}    coverage {100 * ex.coverage:4.1f} %    obstacle ahead {ex.obstacle_ahead}",
              "white"),
             (f"goal {None if ex.goal is None else np.round(ex.goal, 1)}", "magenta"),
+            (f"8 s displacement {ex.stuck_disp:5.1f} m    escapes {ex.n_escapes}"
+             + (f" (last: {ex.escape_level}, {ex.stuck_reason})" if ex.n_escapes else ""), "violet"),
             (f"sticks r/p/y/t {np.round(ex.action, 2)}", "white"),
             ("map: red true track, yellow estimate, magenta goal, blue frontiers, green obstacles", "gray"),
             ("SPACE pause   N next flight   F fast   ESC quit" + ("   [FAST]" if self.fast else ""), "gray"),
         ]
         for k, (txt, col) in enumerate(lines):
-            s.blit(self.font.render(txt, True, col), (10, FPV_SIZE[1] + 10 + 30 * k))
+            s.blit(self.font.render(txt, True, col), (10, FPV_SIZE[1] + 10 + 26 * k))
         if self.outcome:
             s.blit(pygame.font.Font(None, 64).render(self.outcome, True, "white", "black"), (20, 20))
         if self.paused and not self.outcome:

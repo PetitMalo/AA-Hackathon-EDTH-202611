@@ -4,6 +4,7 @@
         -> state estimate (IMU + VIO)
         -> voxel map update (ray cast the depth image from the estimated camera pose)
         -> goal selection:  target bbox seen?  -> go to the target estimate
+                            stuck exploring?   -> graded escape: re-plan / yaw scan / climb (progress.py)
                             otherwise          -> nearest frontier (FrontierPolicy, RL later)
         -> guidance:  use_mpc  -> safe flight corridor (free voxel boxes along drone -> goal) + MPC (QP)
                       otherwise -> waypoint controller
@@ -21,6 +22,7 @@ from .config import ExplorerConfig
 from .controller import WaypointController
 from .corridor import CorridorPlanner
 from .frontiers import FrontierManager
+from .progress import EscapeManager, column_clear
 from .state_estimation import StateEstimator
 from .target import TargetTracker
 from .voxel_map import VoxelMap
@@ -29,7 +31,7 @@ from .voxel_map import VoxelMap
 @dataclass
 class StepInfo:
     """What happened in the last iteration, for logging / debugging / an RL wrapper."""
-    mode: str = "init"                     # init | explore | target | hover
+    mode: str = "init"                     # init | explore | scan | climb | hover | target | attack
     goal: np.ndarray = None
     position: np.ndarray = None
     yaw: float = 0.
@@ -44,6 +46,10 @@ class StepInfo:
     vmax: float = 0.                       # speed cap of the current mode
     n_clutter: int = 0                     # obstacles near the drone (target phase only)
     margin: float = 0.                     # corridor margin given to the MPC
+    stuck_disp: float = float("nan")       # net horizontal displacement over the escape window (nan: not full)
+    escape_level: str = ""                 # last escape level started: replan | scan | climb
+    stuck_reason: str = ""                 # what triggered it: stuck | blocked | clutter
+    n_escapes: int = 0
     action: np.ndarray = field(default_factory=lambda: np.zeros(4, dtype=np.float32))
 
 
@@ -58,7 +64,9 @@ class FrontierExplorer:
         self.target = TargetTracker(c.target, c.camera, c.map.max_ray_m, dt=c.dt)
         self.controller = WaypointController(c.control, c.camera, g=c.g)
         self.planner = CorridorPlanner(c.corridor, c.mpc)
+        self.escape = EscapeManager(c.escape, dt=c.dt)
         self.info = StepInfo()
+        self.frame, self.n_clutter_explore = 0, 0
 
     def reset(self):
         self.estimator.reset()
@@ -66,10 +74,13 @@ class FrontierExplorer:
         self.frontiers.reset()
         self.target.reset()
         self.planner.reset()
+        self.escape.reset()
         self.info = StepInfo()
+        self.frame, self.n_clutter_explore = 0, 0
 
     def step(self, obs):
         c = self.cfg
+        self.frame += 1
         # 1) state estimation
         self.estimator.update(obs)
         est = self.estimator
@@ -89,6 +100,7 @@ class FrontierExplorer:
 
         n_clutter, margin = 0, c.corridor.margin_m
         if self.target.active:
+            self.escape.suspend()                          # the target phase is never "stuck"
             mode, goal = "target", target.copy()
             # glide slope: come down toward the box over a long shallow ramp, never climb for it
             dist_h = np.linalg.norm(goal[:2] - est.p[:2])
@@ -110,7 +122,17 @@ class FrontierExplorer:
                                          target_estimate=target.copy(), action=action)
                     return action
         else:
-            # 4) otherwise: next frontier
+            # 4a) stuck? graded escape (re-plan / yaw scan / climb), executed here
+            escape = self._escape_step(est) if c.escape.enabled else None
+            if escape is not None:
+                mode, goal, action = escape
+                self._publish_phase(obs, mode)
+                self.info = StepInfo(mode=mode, goal=goal, position=est.p.copy(), yaw=est.yaw,
+                                     target_estimate=None if target is None else target.copy(),
+                                     n_frontiers=self.frontiers.n_candidates, coverage=self.map.coverage(),
+                                     action=action, **self._escape_info())
+                return action
+            # 4b) otherwise: next frontier
             goal = self.frontiers.update(self.map, context)
             mode, vmax, ignore_beyond = "explore", c.control.cruise_speed_m_s, np.inf
             if goal is None:
@@ -118,7 +140,7 @@ class FrontierExplorer:
             goal = goal.copy()
             lim = c.frontier.xy_limit_m
             goal[:2] = np.clip(goal[:2], -lim, lim)
-            goal[2] = np.clip(goal[2], *c.frontier.z_band_m)
+            goal[2] = np.clip(goal[2], *self.frontiers.z_band)
 
         # 5) joystick command toward the goal
         cam = (cam_pos, cam_R, self.camera)
@@ -134,8 +156,64 @@ class FrontierExplorer:
                              target_estimate=None if target is None else target.copy(),
                              n_frontiers=self.frontiers.n_candidates, coverage=self.map.coverage(),
                              obstacle_ahead=self.controller.obstacle_ahead, action=action,
-                             vmax=vmax, n_clutter=n_clutter, margin=margin, **mpc_info)
+                             vmax=vmax, n_clutter=n_clutter, margin=margin, **mpc_info, **self._escape_info())
         return action
+
+    # ------------------------------------------------------------------ escape (exploration only)
+    def _escape_step(self, est):
+        """Stuck detection + the running escape level. Returns (mode, goal, sticks) while a scan or a climb
+        flies the drone, None when the usual frontier guidance should run (possibly after a forced re-plan)."""
+        e, ce = self.escape, self.cfg.escape
+        if e.mode is None:
+            cor = self.planner.corridor
+            blocked = bool(cor is not None and cor.blocked)
+            if self.frame % ce.clutter_every == 0:
+                self.n_clutter_explore = self._count_obstacles_near(est.p, None, ce.clutter_radius_m)
+            level = e.update(est.p, est.v, blocked, self.n_clutter_explore)
+            if level is None:
+                return None
+            if level == "climb" and (est.p[2] >= ce.climb_alt_m - ce.climb_tol_m
+                                     or not column_clear(self.map, est.p, ce.climb_alt_m, ce.column_half_width_m)):
+                level = "replan"                           # already high, or a roof / canopy right above
+            # every level abandons the goal we were stuck on, and the place we were stuck in
+            self.frontiers.force_replan([self.frontiers.goal, est.p], ce.blacklist_radius_m, ce.blacklist_s)
+            if level == "replan":
+                e.monitor.clear(ce.cooldown_s)
+                return None
+            e.start(level, est.p)
+        else:
+            e.update(est.p, est.v, False)                   # escape clock only
+
+        if e.mode == "scan" and not e.scan_done():
+            z_ref = e.start_p[2]
+            return "scan", e.start_p.copy(), self._hold_action(est, e.start_p, z_ref, ce.scan_yaw_stick, 2.)
+        if e.mode == "climb" and not e.climb_done(est.p, est.v):
+            goal = np.array([*e.start_p[:2], ce.climb_alt_m])
+            return "climb", goal, self._hold_action(est, e.start_p, ce.climb_alt_m, 0., ce.climb_speed_m_s)
+        # the scan / climb just ended: back to the frontiers, with a fresh plan
+        if e.mode == "climb":
+            self.frontiers.widen_z_band(ce.widen_z_band_m, ce.widen_s)
+        e.finish()
+        self.frontiers.force_replan()
+        self.planner.reset()
+        return None
+
+    def _hold_action(self, est, p_hold, z_ref, yaw_stick, vz_max):
+        """Hold the horizontal position p_hold (slow P-PD loop), go to altitude z_ref at <= vz_max."""
+        c = self.cfg.control
+        v_des = np.zeros(3)
+        v_des[:2] = np.clip(0.5 * (p_hold[:2] - est.p[:2]), -2., 2.)
+        v_des[2] = np.clip(c.alt_kp * (z_ref - est.p[2]), -vz_max, vz_max)
+        a = np.zeros(3)
+        a[:2] = c.vel_gain * (v_des[:2] - est.v[:2])
+        a[2] = c.alt_kd * (v_des[2] - est.v[2])
+        return self.controller.accel_to_sticks(a, est.v, est.yaw, yaw_stick)
+
+    def _escape_info(self):
+        e = self.escape
+        disp = e.monitor.displacement
+        return {"stuck_disp": float("nan") if disp is None else disp, "escape_level": e.level_name,
+                "stuck_reason": e.reason or "", "n_escapes": e.n_escapes}
 
     def _approach_speed(self, dist, n_clutter):
         """Target-phase speed cap: terminal speed (5 m/s clear, down to 3 m/s in clutter) at
@@ -146,11 +224,12 @@ class FrontierExplorer:
         v_brake = np.sqrt(v_term ** 2 + 2. * c.terminal_brake_m_s2 * max(dist - c.terminal_radius_m, 0.))
         return float(min(c.approach_speed_m_s, v_brake))
 
-    def _count_obstacles_near(self, p, target):
-        """Number of separate obstacles (26-connected groups of occupied voxels) within clutter_radius_m
-        of the drone, leaving out the ground layer and the box itself."""
+    def _count_obstacles_near(self, p, target, radius_m=None):
+        """Number of separate obstacles (26-connected groups of occupied voxels) within radius_m
+        (default control.clutter_radius_m) of the drone, leaving out the ground layer and the box itself
+        (target None: no box to leave out)."""
         c, m = self.cfg.control, self.map
-        r = c.clutter_radius_m
+        r = c.clutter_radius_m if radius_m is None else radius_m
         lo = np.clip(np.floor((p - r - m.origin) / m.res).astype(int), 0, m.shape)
         hi = np.clip(np.floor((p + r - m.origin) / m.res).astype(int) + 1, 0, m.shape)
         if np.any(hi <= lo):
@@ -162,7 +241,8 @@ class FrontierExplorer:
         pts = np.stack([cx, cy, cz], axis=-1)
         occ &= np.linalg.norm(pts - p, axis=-1) <= r
         occ &= cz >= c.clutter_ground_m
-        occ &= np.linalg.norm(pts - target, axis=-1) > c.clutter_box_clear_m
+        if target is not None:
+            occ &= np.linalg.norm(pts - target, axis=-1) > c.clutter_box_clear_m
         if not occ.any():
             return 0
         return int(ndimage.label(occ, structure=np.ones((3, 3, 3)))[1])

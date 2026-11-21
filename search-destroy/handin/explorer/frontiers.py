@@ -9,6 +9,8 @@ candidate frontiers and a context, and returns one goal. Two policies:
 
 `FrontierManager` keeps the committed goal, decides when to re-plan, tells the policy why
 (`context["replan_reason"]`) and blacklists goals abandoned on commit timeout (unreachable).
+The escape logic (progress.py) can also force a re-plan with its own wider blacklist, and widen
+the altitude band of the candidates for a while.
 """
 
 import numpy as np
@@ -136,7 +138,7 @@ class GainCostFrontierPolicy(FrontierPolicy):
 
         # 4. Hysteresis: keep the previous goal if still valid, still far enough, not abandoned, and almost as good
         prev = self.prev_goal
-        if (prev is not None and context.get("replan_reason") not in ("timeout", "reached")
+        if (prev is not None and context.get("replan_reason") not in ("timeout", "reached", "escape")
                 and np.linalg.norm(prev - p) >= self.min_dist and is_still_frontier(vmap, prev)
                 and not context.get("is_blacklisted", lambda g: False)(prev)):
             u_prev = self.utility(prev, p, context, vmap)
@@ -211,28 +213,49 @@ class FrontierManager:
         self.frame = 0
         self.n_candidates = 0
         self.time_s = 0.
-        self.blacklist = []                              # (point, expiry time)
+        self.blacklist = []                              # (point, expiry time, radius)
         self.last_reason = None
+        self._forced = False                             # force_replan: re-plan on the next update
+        self._z_band, self._z_band_until = None, -np.inf  # widen_z_band: temporary altitude band
         self.policy.reset()
 
     def is_blacklisted(self, g):
-        r = self.cfg.blacklist_radius_m
-        return any(np.linalg.norm(g - b) < r for b, _ in self.blacklist)
+        return any(np.linalg.norm(g - b) < r for b, _, r in self.blacklist)
+
+    @property
+    def z_band(self):
+        """Altitude band of the frontier candidates (cfg.z_band_m, unless widened for a while)."""
+        return self._z_band if self.time_s < self._z_band_until else self.cfg.z_band_m
+
+    def widen_z_band(self, band, duration_s):
+        self._z_band, self._z_band_until = tuple(band), self.time_s + duration_s
+
+    def force_replan(self, blacklist_points=(), radius_m=None, duration_s=None):
+        """Re-plan on the next update (reason 'escape'), excluding every frontier within radius_m of
+        each blacklist point for duration_s (defaults: cfg.blacklist_radius_m / cfg.blacklist_s)."""
+        r = self.cfg.blacklist_radius_m if radius_m is None else radius_m
+        t = self.time_s + (self.cfg.blacklist_s if duration_s is None else duration_s)
+        for b in blacklist_points:
+            if b is not None:
+                self.blacklist.append((np.asarray(b, float).copy(), t, r))
+        self._forced = True
 
     def update(self, voxel_map, context):
         self.frame += 1
         self.goal_age_s += self.dt
         self.time_s += self.dt
-        self.blacklist = [(b, t) for b, t in self.blacklist if t > self.time_s]
+        self.blacklist = [e for e in self.blacklist if e[1] > self.time_s]
         reason = self._replan_reason(voxel_map, context["position"])
         if reason is not None:
             if reason == "timeout":                      # committed for commit_s without reaching it: unreachable
-                self.blacklist.append((self.goal.copy(), self.time_s + self.cfg.blacklist_s))
-            cands = voxel_map.frontier_points(self.cfg.z_band_m, self.cfg.xy_limit_m)
+                self.blacklist.append((self.goal.copy(), self.time_s + self.cfg.blacklist_s,
+                                       self.cfg.blacklist_radius_m))
+            cands = voxel_map.frontier_points(self.z_band, self.cfg.xy_limit_m)
             if self.blacklist and len(cands):
-                bl = np.array([b for b, _ in self.blacklist])
-                d = np.linalg.norm(cands[:, None, :] - bl[None, :, :], axis=2).min(1)
-                cands = cands[d >= self.cfg.blacklist_radius_m]
+                bl = np.array([b for b, _, _ in self.blacklist])
+                radii = np.array([r for _, _, r in self.blacklist])
+                d = np.linalg.norm(cands[:, None, :] - bl[None, :, :], axis=2)
+                cands = cands[np.all(d >= radii[None, :], axis=1)]
             self.n_candidates = len(cands)
             ctx = dict(context, replan_reason=reason, is_blacklisted=self.is_blacklisted)
             new_goal = self.policy.select(cands, ctx)
@@ -243,6 +266,9 @@ class FrontierManager:
         return self.goal
 
     def _replan_reason(self, voxel_map, position):
+        if self._forced:
+            self._forced = False
+            return "escape"
         if self.goal is None:
             return "none"
         if np.linalg.norm(self.goal - position) < self.cfg.reach_dist_m:

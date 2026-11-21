@@ -80,7 +80,9 @@ def main():
                       f"pos_true={np.round(env.pos[0], 1)} goal={goal} frontiers={ex.n_frontiers} "
                       f"obst={ex.obstacle_ahead} boxes={ex.n_boxes}{'(blk)' if ex.corridor_blocked else ''} "
                       f"mpc={ex.mpc_ms:.1f}ms/{ex.mpc_iters}it vmax={ex.vmax:.1f} clutter={ex.n_clutter} "
-                      f"margin={ex.margin:.2f} box_dist={info['distance_m']:.1f} act={np.round(action, 2)}")
+                      f"margin={ex.margin:.2f} disp8s={ex.stuck_disp:.1f} esc={ex.n_escapes}"
+                      f"{'(' + ex.escape_level + '/' + ex.stuck_reason + ')' if ex.n_escapes else ''} "
+                      f"box_dist={info['distance_m']:.1f} act={np.round(action, 2)}")
             if terminated or truncated:
                 outcome = "success" if info["is_success"] else "collision" if info["collision"] else "terminated"
                 break
