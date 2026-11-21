@@ -82,3 +82,14 @@ target inside the 102° HFOV. Regenerate with
 `uv run python tools/generate_assets.py --level-1`; `previews/level_1.png`
 shows every drone–target pair from above, and `level_1_targets.png` a thumbnail
 per setup.
+
+`level_2` keeps `level_1`'s FOV invariants and distance buckets, but overlays
+them on the `forest` scene: the 377 forest props (pines, broadleaves, bushes,
+rocks, a hut) are kept verbatim, so small obstacles stand between the drone and
+the target. Each setup is rejection-sampled on the forest world so that the box
+touches no solid prop (bushes excepted), the drone (a 0.6 m probe) clears every
+solid prop at its start pose, and a ray from the camera eye to the box centre
+hits the box first — clean line of sight at reset, matching `level_1`'s
+invariant. Regenerate with `uv run python tools/generate_assets.py --level-2`;
+note that regenerating `forest` (the default `tools/generate_assets.py` run)
+changes the obstacles, so `level_2` should be regenerated at the same time.
