@@ -1,5 +1,787 @@
 {
  "name": "level_1",
+ "targets": [
+  {
+   "position_m": [
+    195.15,
+    -61.85,
+    0
+   ],
+   "rpy_rad": [
+    0,
+    0,
+    2.2879
+   ],
+   "context": "attack, d=5 m, h=7.8 m"
+  },
+  {
+   "position_m": [
+    208.2,
+    -121.21,
+    0
+   ],
+   "rpy_rad": [
+    0,
+    0,
+    3.6042
+   ],
+   "context": "attack, d=5 m, h=8.7 m"
+  },
+  {
+   "position_m": [
+    -48.26,
+    -63.94,
+    0
+   ],
+   "rpy_rad": [
+    0,
+    0,
+    1.5734
+   ],
+   "context": "attack, d=5 m, h=5.4 m"
+  },
+  {
+   "position_m": [
+    150.02,
+    139.99,
+    0
+   ],
+   "rpy_rad": [
+    0,
+    0,
+    3.566
+   ],
+   "context": "attack, d=5 m, h=6.6 m"
+  },
+  {
+   "position_m": [
+    200.62,
+    125.67,
+    0
+   ],
+   "rpy_rad": [
+    0,
+    0,
+    2.5016
+   ],
+   "context": "attack, d=5 m, h=6.6 m"
+  },
+  {
+   "position_m": [
+    -16.7,
+    -179.38,
+    0
+   ],
+   "rpy_rad": [
+    0,
+    0,
+    4.3927
+   ],
+   "context": "attack, d=5 m, h=4.2 m"
+  },
+  {
+   "position_m": [
+    -141.16,
+    30.09,
+    0
+   ],
+   "rpy_rad": [
+    0,
+    0,
+    4.0502
+   ],
+   "context": "attack, d=5 m, h=11.4 m"
+  },
+  {
+   "position_m": [
+    211.33,
+    -199.15,
+    0
+   ],
+   "rpy_rad": [
+    0,
+    0,
+    0.8463
+   ],
+   "context": "attack, d=5 m, h=3.5 m"
+  },
+  {
+   "position_m": [
+    176.58,
+    124.47,
+    0
+   ],
+   "rpy_rad": [
+    0,
+    0,
+    5.976
+   ],
+   "context": "attack, d=5 m, h=8.4 m"
+  },
+  {
+   "position_m": [
+    -20.15,
+    108.65,
+    0
+   ],
+   "rpy_rad": [
+    0,
+    0,
+    5.4688
+   ],
+   "context": "attack, d=5 m, h=11.0 m"
+  },
+  {
+   "position_m": [
+    -10.12,
+    4.13,
+    0
+   ],
+   "rpy_rad": [
+    0,
+    0,
+    4.6436
+   ],
+   "context": "attack, d=10 m, h=4.0 m"
+  },
+  {
+   "position_m": [
+    -170.09,
+    -52.25,
+    0
+   ],
+   "rpy_rad": [
+    0,
+    0,
+    2.396
+   ],
+   "context": "attack, d=10 m, h=12.0 m"
+  },
+  {
+   "position_m": [
+    -148.3,
+    -139.08,
+    0
+   ],
+   "rpy_rad": [
+    0,
+    0,
+    0.9686
+   ],
+   "context": "attack, d=10 m, h=15.0 m"
+  },
+  {
+   "position_m": [
+    47.15,
+    -41.87,
+    0
+   ],
+   "rpy_rad": [
+    0,
+    0,
+    2.3553
+   ],
+   "context": "attack, d=10 m, h=3.9 m"
+  },
+  {
+   "position_m": [
+    94.74,
+    38.87,
+    0
+   ],
+   "rpy_rad": [
+    0,
+    0,
+    1.4753
+   ],
+   "context": "attack, d=10 m, h=9.3 m"
+  },
+  {
+   "position_m": [
+    201.92,
+    -54.63,
+    0
+   ],
+   "rpy_rad": [
+    0,
+    0,
+    4.3688
+   ],
+   "context": "attack, d=10 m, h=16.9 m"
+  },
+  {
+   "position_m": [
+    -186.0,
+    -52.4,
+    0
+   ],
+   "rpy_rad": [
+    0,
+    0,
+    5.7145
+   ],
+   "context": "attack, d=10 m, h=15.8 m"
+  },
+  {
+   "position_m": [
+    185.15,
+    210.55,
+    0
+   ],
+   "rpy_rad": [
+    0,
+    0,
+    1.864
+   ],
+   "context": "attack, d=10 m, h=14.8 m"
+  },
+  {
+   "position_m": [
+    -90.17,
+    -63.26,
+    0
+   ],
+   "rpy_rad": [
+    0,
+    0,
+    5.0572
+   ],
+   "context": "attack, d=10 m, h=18.6 m"
+  },
+  {
+   "position_m": [
+    -133.08,
+    -157.14,
+    0
+   ],
+   "rpy_rad": [
+    0,
+    0,
+    5.2637
+   ],
+   "context": "attack, d=10 m, h=22.2 m"
+  },
+  {
+   "position_m": [
+    142.45,
+    -116.88,
+    0
+   ],
+   "rpy_rad": [
+    0,
+    0,
+    1.4248
+   ],
+   "context": "attack, d=20 m, h=15.9 m"
+  },
+  {
+   "position_m": [
+    -30.59,
+    -122.05,
+    0
+   ],
+   "rpy_rad": [
+    0,
+    0,
+    2.2924
+   ],
+   "context": "attack, d=20 m, h=29.2 m"
+  },
+  {
+   "position_m": [
+    -181.21,
+    -152.37,
+    0
+   ],
+   "rpy_rad": [
+    0,
+    0,
+    5.2756
+   ],
+   "context": "attack, d=20 m, h=25.4 m"
+  },
+  {
+   "position_m": [
+    94.59,
+    -181.16,
+    0
+   ],
+   "rpy_rad": [
+    0,
+    0,
+    3.6006
+   ],
+   "context": "attack, d=20 m, h=9.0 m"
+  },
+  {
+   "position_m": [
+    -94.52,
+    210.48,
+    0
+   ],
+   "rpy_rad": [
+    0,
+    0,
+    3.0136
+   ],
+   "context": "attack, d=20 m, h=20.6 m"
+  },
+  {
+   "position_m": [
+    -22.88,
+    -63.07,
+    0
+   ],
+   "rpy_rad": [
+    0,
+    0,
+    1.5403
+   ],
+   "context": "attack, d=20 m, h=21.1 m"
+  },
+  {
+   "position_m": [
+    -102.48,
+    200.26,
+    0
+   ],
+   "rpy_rad": [
+    0,
+    0,
+    2.3551
+   ],
+   "context": "attack, d=20 m, h=16.3 m"
+  },
+  {
+   "position_m": [
+    213.44,
+    3.59,
+    0
+   ],
+   "rpy_rad": [
+    0,
+    0,
+    1.9594
+   ],
+   "context": "attack, d=20 m, h=6.5 m"
+  },
+  {
+   "position_m": [
+    -14.73,
+    -100.51,
+    0
+   ],
+   "rpy_rad": [
+    0,
+    0,
+    2.253
+   ],
+   "context": "attack, d=20 m, h=3.9 m"
+  },
+  {
+   "position_m": [
+    -67.98,
+    165.63,
+    0
+   ],
+   "rpy_rad": [
+    0,
+    0,
+    0.4106
+   ],
+   "context": "attack, d=20 m, h=27.6 m"
+  },
+  {
+   "position_m": [
+    27.26,
+    7.14,
+    0
+   ],
+   "rpy_rad": [
+    0,
+    0,
+    5.89
+   ],
+   "context": "attack, d=40 m, h=20.9 m"
+  },
+  {
+   "position_m": [
+    -168.37,
+    72.88,
+    0
+   ],
+   "rpy_rad": [
+    0,
+    0,
+    2.5491
+   ],
+   "context": "attack, d=40 m, h=7.0 m"
+  },
+  {
+   "position_m": [
+    14.8,
+    -88.43,
+    0
+   ],
+   "rpy_rad": [
+    0,
+    0,
+    1.5641
+   ],
+   "context": "attack, d=40 m, h=23.8 m"
+  },
+  {
+   "position_m": [
+    -185.09,
+    182.7,
+    0
+   ],
+   "rpy_rad": [
+    0,
+    0,
+    0.118
+   ],
+   "context": "attack, d=40 m, h=11.2 m"
+  },
+  {
+   "position_m": [
+    -187.76,
+    -198.94,
+    0
+   ],
+   "rpy_rad": [
+    0,
+    0,
+    6.2073
+   ],
+   "context": "attack, d=40 m, h=22.1 m"
+  },
+  {
+   "position_m": [
+    107.32,
+    8.98,
+    0
+   ],
+   "rpy_rad": [
+    0,
+    0,
+    0.4367
+   ],
+   "context": "attack, d=40 m, h=5.4 m"
+  },
+  {
+   "position_m": [
+    16.98,
+    -54.7,
+    0
+   ],
+   "rpy_rad": [
+    0,
+    0,
+    2.3648
+   ],
+   "context": "attack, d=40 m, h=4.2 m"
+  },
+  {
+   "position_m": [
+    76.96,
+    -147.24,
+    0
+   ],
+   "rpy_rad": [
+    0,
+    0,
+    1.7591
+   ],
+   "context": "attack, d=40 m, h=11.6 m"
+  },
+  {
+   "position_m": [
+    -43.24,
+    -81.62,
+    0
+   ],
+   "rpy_rad": [
+    0,
+    0,
+    4.753
+   ],
+   "context": "attack, d=40 m, h=24.1 m"
+  },
+  {
+   "position_m": [
+    18.22,
+    -193.79,
+    0
+   ],
+   "rpy_rad": [
+    0,
+    0,
+    3.546
+   ],
+   "context": "attack, d=40 m, h=12.8 m"
+  },
+  {
+   "position_m": [
+    -134.11,
+    -7.18,
+    0
+   ],
+   "rpy_rad": [
+    0,
+    0,
+    2.9658
+   ],
+   "context": "attack, d=80 m, h=14.8 m"
+  },
+  {
+   "position_m": [
+    -7.13,
+    67.95,
+    0
+   ],
+   "rpy_rad": [
+    0,
+    0,
+    1.9562
+   ],
+   "context": "attack, d=80 m, h=3.7 m"
+  },
+  {
+   "position_m": [
+    138.79,
+    5.95,
+    0
+   ],
+   "rpy_rad": [
+    0,
+    0,
+    2.8311
+   ],
+   "context": "attack, d=80 m, h=16.2 m"
+  },
+  {
+   "position_m": [
+    140.88,
+    18.06,
+    0
+   ],
+   "rpy_rad": [
+    0,
+    0,
+    2.9084
+   ],
+   "context": "attack, d=80 m, h=7.6 m"
+  },
+  {
+   "position_m": [
+    45.69,
+    -17.87,
+    0
+   ],
+   "rpy_rad": [
+    0,
+    0,
+    0.5297
+   ],
+   "context": "attack, d=80 m, h=3.0 m"
+  },
+  {
+   "position_m": [
+    -59.5,
+    89.87,
+    0
+   ],
+   "rpy_rad": [
+    0,
+    0,
+    6.2027
+   ],
+   "context": "attack, d=80 m, h=3.1 m"
+  },
+  {
+   "position_m": [
+    -114.52,
+    -115.88,
+    0
+   ],
+   "rpy_rad": [
+    0,
+    0,
+    0.8062
+   ],
+   "context": "attack, d=80 m, h=21.4 m"
+  },
+  {
+   "position_m": [
+    135.04,
+    -21.14,
+    0
+   ],
+   "rpy_rad": [
+    0,
+    0,
+    0.2699
+   ],
+   "context": "attack, d=80 m, h=9.6 m"
+  },
+  {
+   "position_m": [
+    77.19,
+    0.26,
+    0
+   ],
+   "rpy_rad": [
+    0,
+    0,
+    4.6201
+   ],
+   "context": "attack, d=80 m, h=8.4 m"
+  },
+  {
+   "position_m": [
+    12.43,
+    -140.8,
+    0
+   ],
+   "rpy_rad": [
+    0,
+    0,
+    3.8787
+   ],
+   "context": "attack, d=80 m, h=26.9 m"
+  },
+  {
+   "position_m": [
+    -59.13,
+    -52.2,
+    0
+   ],
+   "rpy_rad": [
+    0,
+    0,
+    1.2572
+   ],
+   "context": "attack, d=160 m, h=28.0 m"
+  },
+  {
+   "position_m": [
+    -40.03,
+    4.35,
+    0
+   ],
+   "rpy_rad": [
+    0,
+    0,
+    0.5803
+   ],
+   "context": "attack, d=160 m, h=21.2 m"
+  },
+  {
+   "position_m": [
+    56.75,
+    43.05,
+    0
+   ],
+   "rpy_rad": [
+    0,
+    0,
+    5.0545
+   ],
+   "context": "attack, d=160 m, h=22.6 m"
+  },
+  {
+   "position_m": [
+    14.52,
+    -27.0,
+    0
+   ],
+   "rpy_rad": [
+    0,
+    0,
+    5.044
+   ],
+   "context": "attack, d=160 m, h=26.1 m"
+  },
+  {
+   "position_m": [
+    -68.87,
+    -23.88,
+    0
+   ],
+   "rpy_rad": [
+    0,
+    0,
+    4.3411
+   ],
+   "context": "attack, d=160 m, h=3.8 m"
+  },
+  {
+   "position_m": [
+    -26.45,
+    15.9,
+    0
+   ],
+   "rpy_rad": [
+    0,
+    0,
+    2.0313
+   ],
+   "context": "attack, d=160 m, h=29.2 m"
+  },
+  {
+   "position_m": [
+    -26.82,
+    33.85,
+    0
+   ],
+   "rpy_rad": [
+    0,
+    0,
+    4.3794
+   ],
+   "context": "attack, d=160 m, h=11.2 m"
+  },
+  {
+   "position_m": [
+    52.93,
+    64.1,
+    0
+   ],
+   "rpy_rad": [
+    0,
+    0,
+    1.0123
+   ],
+   "context": "attack, d=160 m, h=27.3 m"
+  },
+  {
+   "position_m": [
+    75.55,
+    -54.22,
+    0
+   ],
+   "rpy_rad": [
+    0,
+    0,
+    5.8001
+   ],
+   "context": "attack, d=160 m, h=5.5 m"
+  },
+  {
+   "position_m": [
+    45.21,
+    16.15,
+    0
+   ],
+   "rpy_rad": [
+    0,
+    0,
+    2.9838
+   ],
+   "context": "attack, d=160 m, h=25.8 m"
+  }
+ ],
  "setups": [
   {
    "target": {

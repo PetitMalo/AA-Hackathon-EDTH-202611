@@ -5,3 +5,13 @@ scenario.json
 plan.json
 plan.svg
 .fleetkit-board.json
+
+# Heavy demo replay captures — kept out of git (use external storage / LFS)
+demo/**/*.mcap
+
+# Fleet run-log output (ephemeral); launcher .sh scripts are tracked
+fleet/runs.txt
+fleet/runs_approach.txt
+fleet/runs_stopped.txt
+fleet/manche_runs.txt
+fleet/new_runs.txt
