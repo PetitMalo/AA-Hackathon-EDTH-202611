@@ -9,6 +9,7 @@ les arguments passés après la commande sont transmis tels quels :
     uv run fpv-tb [--logdir ...]                          TensorBoard sur /tmp/fpv_runs
     uv run fpv-check                                      handin.check_handin
     uv run fpv-check-env / -estimator / -features         bancs de test de train/
+    uv run fpv-check-explore                              train.check_explore (env d'exploration)
 """
 
 import runpy
@@ -50,6 +51,10 @@ def check_estimator():
 
 def check_features():
     _run("train.check_features")
+
+
+def check_explore():
+    _run("train.check_explore")
 
 
 def tensorboard():

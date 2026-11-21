@@ -19,6 +19,7 @@ fpv-check = "train.cli:check_handin"
 fpv-check-env = "train.cli:check_env"
 fpv-check-estimator = "train.cli:check_estimator"
 fpv-check-features = "train.cli:check_features"
+fpv-check-explore = "train.cli:check_explore"
 
 [tool.uv.sources]
 gym-pybullet-drones = { path = "external/gym-pybullet-drones", editable = true }

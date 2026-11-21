@@ -37,6 +37,7 @@ def save_copy(out_dir, path=None, overrides=()):
 def terrain_split(cfg):
     """(train, holdout) : listes de "scène@vN". Les versions holdout ne sont jamais dans train."""
     t = cfg["terrains"]
+    only = set(t.get("train_versions") or [])     # optionnel : n'entraîner que sur ces versions (ex. [1, 2, 3, 4, 5, 6])
     train, holdout = [], []
     for scene in t["scenes"]:
         n = SCENE_VERSIONS[scene]
@@ -45,7 +46,10 @@ def terrain_split(cfg):
         if bad:
             raise ValueError(f"{scene} n'a que {n} versions, holdout invalide : {bad}")
         for v in range(1, n + 1):
-            (holdout if v in held else train).append(f"{scene}@v{v}")
+            if v in held:
+                holdout.append(f"{scene}@v{v}")
+            elif not only or v in only:
+                train.append(f"{scene}@v{v}")
     if not train:
         raise ValueError("aucun terrain d'entraînement")
     return train, holdout

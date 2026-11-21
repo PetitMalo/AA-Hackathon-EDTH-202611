@@ -26,9 +26,35 @@ from torch import nn
 from handin.policy_net import PI_HIDDEN
 from train import config as cfgmod
 from train.env_wrapper import FINAL_STAGE, make_env_fn
+from train.explore_env import make_explore_env_fn
 from train.sb3_policy import SB3Extractor, export_policy
 
 OUTCOMES = ("success", "collision", "out_of_arena", "timeout")
+EXPLORE_OUTCOMES = ("detected", "success", "collision", "out_of_arena", "timeout", "coverage_done")
+
+
+class ExploreStatsCallback(BaseCallback):
+    """Explorateur : couverture finale, taux et temps de détection, issues, sur les derniers épisodes."""
+
+    def __init__(self, window=300):
+        super().__init__()
+        self.recent = deque(maxlen=window)
+
+    def _on_step(self):
+        for info, done in zip(self.locals["infos"], self.locals["dones"]):
+            if done and info.get("outcome"):
+                self.recent.append(info)
+        if self.n_calls % 256 == 0 and self.recent:
+            n = len(self.recent)
+            det = [i["t_detect"] for i in self.recent if i["detected"]]
+            self.logger.record("explore/episodes_in_window", n)
+            self.logger.record("explore/coverage_mean", sum(i["coverage"] for i in self.recent) / n)
+            self.logger.record("explore/detection_rate", len(det) / n)
+            if det:
+                self.logger.record("explore/t_detect_mean_s", sum(det) / len(det))
+            for o in EXPLORE_OUTCOMES:
+                self.logger.record(f"explore/{o}_rate", sum(1 for i in self.recent if i["outcome"] == o) / n)
+        return True
 
 
 class CurriculumCallback(BaseCallback):
@@ -108,14 +134,17 @@ def main():
     (out / "holdout_terrains.txt").write_text("\n".join(holdout) + "\n")
     print(f"[run] {out} | {len(train_terrains)} terrains d'entraînement, {len(holdout)} de validation", flush=True)
 
-    stage = int(cfg["curriculum"]["start_stage"])
+    explore = run.get("task", "approach") == "explore"
+    stage = FINAL_STAGE if explore else int(cfg["curriculum"]["start_stage"])
     n_envs = run["envs"]
     rollout = ppo["n_steps"] * n_envs
     if rollout % ppo["batch_size"]:
         print(f"[attention] rollout {rollout} pas n'est pas un multiple de batch_size {ppo['batch_size']}", flush=True)
     torch.set_num_threads(4)
 
-    venv = SubprocVecEnv([make_env_fn(cfg, train_terrains, i, stage) for i in range(n_envs)], start_method="spawn")
+    fns = [make_explore_env_fn(cfg, train_terrains, i) if explore else make_env_fn(cfg, train_terrains, i, stage)
+           for i in range(n_envs)]
+    venv = SubprocVecEnv(fns, start_method="spawn")
     venv = VecMonitor(venv)
 
     if a.resume:
@@ -131,7 +160,8 @@ def main():
                                activation_fn=nn.Tanh, log_std_init=ppo["log_std_init"]),
             tensorboard_log=str(out / "tb"), seed=run["seed"], device="auto", verbose=1)
 
-    callbacks = CallbackList([CurriculumCallback(cfg, stage, out), CheckpointCallback(run["save_every_steps"], out)])
+    first = ExploreStatsCallback() if explore else CurriculumCallback(cfg, stage, out)
+    callbacks = CallbackList([first, CheckpointCallback(run["save_every_steps"], out)])
     try:
         model.learn(total_timesteps=run["total_steps"], callback=callbacks, tb_log_name="ppo",
                     reset_num_timesteps=a.resume is None)
