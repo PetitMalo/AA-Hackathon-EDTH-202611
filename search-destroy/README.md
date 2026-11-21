@@ -74,6 +74,7 @@ The simulation waits for your agent, so a slow agent still gets every step. Its 
 | Metric (`metrics.json`, per terrain type) | Meaning |
 | --- | --- |
 | `success_rate`, `collision_rate`, `timeout_rate`, `out_of_arena_rate`, `error_rate` | Share of flights per outcome |
+| `exploration_time_s`, `terminal_time_s` | Mean time spent searching vs. committed to the target, all flights |
 | `reach_time_s`, `reach_mean_speed_m_s` | Flight time and mean speed, successful flights only |
 | `path_efficiency` | Start distance to the box ÷ path flown, successful flights only |
 | `detection_rate`, `first_detection_s` | Share of flights in which the target was ever detected, and when |
@@ -105,7 +106,14 @@ uv run python -m fpv_sim.scripts.evaluate --terrains field --runs 2      # quick
 
 Options: `--runs` (flights per box), `--terrains`, `--timeout` (s), `--workers` (parallel processes, default all CPUs), `--seed`, `--out`, and `--depth-every` (log one depth map in N frames; `1` logs every frame, about 130 MB a flight).
 
-Results go to `out/<time>/`: `flights.csv`, `metrics.json`, and one `<terrain>@v<N>/runNN.mcap` per flight. MCAP files open in [Foxglove](https://foxglove.dev) and hold the observations, IMU, true state, and agent actions with their latency.
+Results go to `out/<time>/`: `flights.csv`, `metrics.json`, and one `<terrain>@v<N>/runNN.mcap` per flight. MCAP files open in [Foxglove](https://foxglove.dev) and hold the observations, IMU, true state, and agent actions with their latency. They also carry two analysis topics:
+
+| Topic | Content |
+| --- | --- |
+| `/mission/phase` | Phase events: `enter` (run start), `transition` (the flight's single commit from `exploration` to `terminal`), `policy_transition` (debug: every mode change the agent reports, including flickers), `final` (run end). Per-flight `exploration_time_s` / `terminal_time_s` in `flights.csv` split at the `transition` event. |
+| `/analysis/target_relative` | Per-step target pose in the drone frame: `distance_m`, `bearing_deg` (left +), `elevation_deg` (up +), `lateral_offset_m`, `vertical_offset_m`. |
+
+The phase switch is the policy's own: a flight latches into `terminal` the first time the agent reports its target mode; there is no distance threshold in the evaluator.
 
 ## Observation and action
 
