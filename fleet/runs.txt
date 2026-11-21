@@ -1,0 +1,13 @@
+manche     manche_v1_base    run.seed=0
+venturi    manche_v1_t21     reward.time=0.0021
+ardennes   manche_v1_col50   reward.collision=-50.0
+allier     manche_v1_cov03   reward.coverage=0.3
+essonne    manche_v1_to30    reward.timeout=-30.0
+gironde    manche_v1_fast    curriculum.thresholds=[0.5,0.4,0.3]
+marne      manche_v1_det05   reward.detect=0.05
+moselle    manche_v1_prog3   reward.progress=3.0
+loire      loire_v2_s0      run.seed=0
+rotule     loire_v2_cov03   run.seed=8 reward.coverage=0.3
+rover      loire_v2_cov07   run.seed=9 reward.coverage=0.7
+royce      loire_v2_col50   run.seed=10 reward.collision=-50.0
+sacrum     loire_v2_prog2   run.seed=11 reward.progress=2.0

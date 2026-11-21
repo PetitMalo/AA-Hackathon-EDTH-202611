@@ -1,0 +1,45 @@
+aerides    approach_base_s0        run.seed=0 run.envs=12 ppo.n_steps=512 
+autriche   approach_base_s1        run.seed=1 run.envs=16 ppo.n_steps=384 
+belgique   approach_base_s2        run.seed=2 run.envs=16 ppo.n_steps=384 
+bentley    approach_base_s3        run.seed=3 run.envs=24 ppo.n_steps=256 
+calanthe   approach_base_s4        run.seed=4 run.envs=12 ppo.n_steps=512 
+diuris     approach_base_s5        run.seed=5 run.envs=12 ppo.n_steps=512 
+dordogne   approach_base_s6        run.seed=6 run.envs=24 ppo.n_steps=256 
+encyclia   approach_speed0_a       run.seed=7 run.envs=12 ppo.n_steps=512 reward.success_speed=0.0
+epipactis  approach_speed0_b       run.seed=8 run.envs=12 ppo.n_steps=512 reward.success_speed=0.0
+finlande   approach_speed100_a     run.seed=9 run.envs=16 ppo.n_steps=384 reward.success_speed=100.0
+france     approach_speed100_b     run.seed=10 run.envs=16 ppo.n_steps=384 reward.success_speed=100.0
+groenland  approach_lost001_a      run.seed=11 run.envs=16 ppo.n_steps=384 reward.lost=0.01
+habenaria  approach_lost001_b      run.seed=12 run.envs=12 ppo.n_steps=512 reward.lost=0.01
+hollande   approach_novis_a        run.seed=13 run.envs=16 ppo.n_steps=384 reward.lost=0.0 reward.center=0.0
+hongrie    approach_novis_b        run.seed=14 run.envs=16 ppo.n_steps=384 reward.lost=0.0 reward.center=0.0
+irlande    approach_center002_a    run.seed=15 run.envs=16 ppo.n_steps=384 reward.center=0.02
+islande    approach_center002_b    run.seed=16 run.envs=16 ppo.n_steps=384 reward.center=0.02
+lituanie   approach_prog05_a       run.seed=17 run.envs=16 ppo.n_steps=384 reward.progress=0.5
+malte      approach_prog05_b       run.seed=18 run.envs=16 ppo.n_steps=384 reward.progress=0.5
+maserati   approach_prog2_a        run.seed=19 run.envs=24 ppo.n_steps=256 reward.progress=2.0
+metacarpe  approach_prog2_b        run.seed=20 run.envs=24 ppo.n_steps=256 reward.progress=2.0
+neotinea   approach_smooth0001_a   run.seed=21 run.envs=12 ppo.n_steps=512 reward.smooth=0.001
+oncidium   approach_smooth0001_b   run.seed=22 run.envs=12 ppo.n_steps=512 reward.smooth=0.001
+ophrys     approach_time0002_a     run.seed=23 run.envs=12 ppo.n_steps=512 reward.time=0.002
+orchis     approach_time0002_b     run.seed=24 run.envs=12 ppo.n_steps=512 reward.time=0.002
+perdrix    approach_lr1e-4_a       run.seed=25 run.envs=12 ppo.n_steps=512 ppo.lr=1e-4
+peugeot    approach_lr1e-4_b       run.seed=26 run.envs=24 ppo.n_steps=256 ppo.lr=1e-4
+pleione    approach_ent001_a       run.seed=27 run.envs=12 ppo.n_steps=512 ppo.ent_coef=0.01
+pologne    approach_ent001_b       run.seed=28 run.envs=16 ppo.n_steps=384 ppo.ent_coef=0.01
+portugal   approach_gamma0995_a    run.seed=29 run.envs=16 ppo.n_steps=384 ppo.gamma=0.995
+quiscale   approach_gamma0995_b    run.seed=30 run.envs=12 ppo.n_steps=512 ppo.gamma=0.995
+roumanie   approach_epochs10_a     run.seed=31 run.envs=16 ppo.n_steps=384 ppo.n_epochs=10
+saone      approach_epochs10_b     run.seed=32 run.envs=24 ppo.n_steps=256 ppo.n_epochs=10
+serapias   approach_logstd05_a     run.seed=33 run.envs=12 ppo.n_steps=512 ppo.log_std_init=-0.5
+sole       approach_logstd05_b     run.seed=34 run.envs=12 ppo.n_steps=512 ppo.log_std_init=-0.5
+sternum    approach_curfast_a      run.seed=35 run.envs=24 ppo.n_steps=256 curriculum.thresholds=[0.5,0.5,0.4,0.4,0.3]
+suede      approach_curfast_b      run.seed=36 run.envs=16 ppo.n_steps=384 curriculum.thresholds=[0.5,0.5,0.4,0.4,0.3]
+tarse      approach_curstrict_a    run.seed=37 run.envs=24 ppo.n_steps=256 curriculum.thresholds=[0.8,0.8,0.7,0.7,0.6]
+telipogon  approach_curstrict_b    run.seed=38 run.envs=12 ppo.n_steps=512 curriculum.thresholds=[0.8,0.8,0.7,0.7,0.6]
+tibia      approach_replay04_a     run.seed=39 run.envs=24 ppo.n_steps=256 curriculum.replay_previous=0.4
+urabu      approach_replay04_b     run.seed=40 run.envs=12 ppo.n_steps=512 curriculum.replay_previous=0.4
+vanda      approach_yaw5_a         run.seed=41 run.envs=12 ppo.n_steps=512 approach.yaw_noise_deg=5.0
+vanilla    approach_yaw5_b         run.seed=42 run.envs=12 ppo.n_steps=512 approach.yaw_noise_deg=5.0
+xylobium   approach_col100_a       run.seed=43 run.envs=12 ppo.n_steps=512 reward.collision=-100.0 reward.out_of_arena=-100.0
+zeuxine    approach_col100_b       run.seed=44 run.envs=12 ppo.n_steps=512 reward.collision=-100.0 reward.out_of_arena=-100.0

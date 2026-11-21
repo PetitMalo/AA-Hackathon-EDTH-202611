@@ -1,0 +1,11 @@
+venturi    loire_v2_s1      run.seed=1
+ardennes   loire_v2_s2      run.seed=2
+allier     loire_v2_s3      run.seed=3
+essonne    loire_v2_s4      run.seed=4
+gironde    loire_v2_s5      run.seed=5
+marne      loire_v2_s6      run.seed=6
+moselle    loire_v2_s7      run.seed=7
+rotule     loire_v2_cov03   run.seed=8 reward.coverage=0.3
+rover      loire_v2_cov07   run.seed=9 reward.coverage=0.7
+royce      loire_v2_col50   run.seed=10 reward.collision=-50.0
+sacrum     loire_v2_prog2   run.seed=11 reward.progress=2.0
