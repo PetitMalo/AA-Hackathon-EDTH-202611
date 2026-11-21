@@ -64,8 +64,10 @@ class WaypointController:
         yaw_err = wrap(des_yaw - yaw)
         return -self.cfg.yaw_gain * yaw_err, yaw_err
 
-    def accel_to_sticks(self, a, v, yaw, yaw_stick, tilt_deg=None):
-        """Desired world acceleration (without drag) -> (roll, pitch, yaw, throttle) sticks, drag fed forward."""
+    def accel_to_sticks(self, a, v, yaw, yaw_stick, tilt_deg=None, pitch_min=None):
+        """Desired world acceleration (without drag) -> (roll, pitch, yaw, throttle) sticks, drag fed forward.
+        pitch_min (rad, nose down > 0): floor on the pitch (target pursuit: keeps the box inside the image,
+        the camera being tilted up); the collective is recomputed so the vertical acceleration is kept."""
         c = self.cfg
         a = np.array(a, dtype=float)
         a[:2] = a[:2] + self.drag_k * np.linalg.norm(v) * v[:2]
@@ -85,6 +87,8 @@ class WaypointController:
         thrust = np.sqrt(a_fwd ** 2 + a_left ** 2 + a_up ** 2)
         pitch = np.clip(np.arctan2(a_fwd, a_up), -max_tilt, max_tilt)
         roll = np.clip(-np.arcsin(np.clip(a_left / thrust, -1, 1)), -max_tilt, max_tilt)
+        if pitch_min is not None:
+            pitch = max(pitch, min(pitch_min, max_tilt))
         throttle = a_up / (np.cos(pitch) * np.cos(roll)) / self.g - 1.
 
         full = np.radians(c.max_stick_deg)

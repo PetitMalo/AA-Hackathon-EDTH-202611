@@ -20,16 +20,18 @@ from .mpc import CorridorMPC
 
 
 # ---------------------------------------------------------------------- occupancy helpers
-def forbidden_mask(voxel_map, lo, hi, unknown_is_forbidden=True, clear_center=None, clear_radius=0.):
-    """Boolean grid over voxel indices [lo, hi): occupied (and unknown), minus a sphere around clear_center."""
+def forbidden_mask(voxel_map, lo, hi, unknown_is_forbidden=True, clear_idx=None):
+    """Boolean grid over voxel indices [lo, hi): occupied (and unknown), except the voxels of clear_idx
+    ((N, 3) global voxel indices: the target box's own voxels, contact = success). Nothing else is cleared:
+    an obstacle next to the box stays an obstacle."""
     sl = tuple(slice(int(a), int(b)) for a, b in zip(lo, hi))
     obs, lo_odds = voxel_map.observed[sl], voxel_map.logodds[sl]
     mask = ~(obs & (lo_odds <= 0)) if unknown_is_forbidden else (obs & (lo_odds > 0))
-    if clear_center is not None and clear_radius > 0:
-        axes = [voxel_map.origin[i] + (np.arange(lo[i], hi[i]) + .5) * voxel_map.res for i in range(3)]
-        d2 = ((axes[0] - clear_center[0])[:, None, None] ** 2 + (axes[1] - clear_center[1])[None, :, None] ** 2
-              + (axes[2] - clear_center[2])[None, None, :] ** 2)
-        mask &= d2 > clear_radius ** 2
+    if clear_idx is not None and len(clear_idx):
+        rel = np.asarray(clear_idx, int) - np.asarray(lo, int)
+        ok = np.all((rel >= 0) & (rel < np.asarray(mask.shape)), axis=1)
+        if ok.any():
+            mask[tuple(rel[ok].T)] = False
     return mask
 
 
@@ -155,10 +157,10 @@ class Corridor:
     def contains(self, p, tol=0.):
         return bool(np.any(np.all((p >= self.lo - tol) & (p <= self.hi + tol), axis=1)))
 
-    def is_blocked(self, voxel_map, clear_center=None, clear_radius=0.):
+    def is_blocked(self, voxel_map, clear_idx=None):
         """A voxel of a box became OCCUPIED (unknown voxels can only turn free or occupied later)."""
         for lo, hi in zip(self.idx_lo, self.idx_hi):
-            if forbidden_mask(voxel_map, lo, hi, False, clear_center, clear_radius).any():
+            if forbidden_mask(voxel_map, lo, hi, False, clear_idx).any():
                 return True
         return False
 
@@ -191,7 +193,7 @@ def _polyline_exit(poly, cum, lo, hi, t_from):
         t = cum[seg]
 
 
-def build_corridor(voxel_map, start, goal, cfg, clear_center=None, path=None):
+def build_corridor(voxel_map, start, goal, cfg, clear_idx=None, path=None):
     """Corridor from `start` toward `goal` along `path` ((K, 3) polyline start -> goal; None: straight
     segment), truncated to cfg.max_length_m of arc length. None if start is off the map."""
     start, goal = np.asarray(start, float), np.asarray(goal, float)
@@ -210,7 +212,7 @@ def build_corridor(voxel_map, start, goal, cfg, clear_center=None, path=None):
     shape = np.array(voxel_map.shape)
     c_lo = np.clip(np.floor((poly.min(0) - cfg.max_box_size_m - voxel_map.origin) / res).astype(int), 0, shape)
     c_hi = np.clip(np.ceil((poly.max(0) + cfg.max_box_size_m - voxel_map.origin) / res).astype(int) + 1, 0, shape)
-    forb = forbidden_mask(voxel_map, c_lo, c_hi, True, clear_center, cfg.target_clear_radius_m)
+    forb = forbidden_mask(voxel_map, c_lo, c_hi, True, clear_idx)
     forb[tuple(seed - c_lo)] = False                                     # the drone is there: it is free
     grower = BoxGrower(forb, c_lo)
 
@@ -254,8 +256,9 @@ class CorridorPlanner:
         self.n_replans = 0
         self.refs = None
         self.path = None                   # polyline given by path_fn at the last re-plan (None: straight)
+        self.terminal_active = False       # terminal MPC cost actually used at the last step
 
-    def _needs_replan(self, voxel_map, p, goal, clear_center):
+    def _needs_replan(self, voxel_map, p, goal, clear_idx):
         c, cor = self.cfg, self.corridor
         if cor is None or self.age >= c.replan_every:
             return True
@@ -263,29 +266,37 @@ class CorridorPlanner:
             return True
         if not cor.contains(p, c.outside_tol_m):
             return True
-        return cor.is_blocked(voxel_map, clear_center, c.target_clear_radius_m)
+        return cor.is_blocked(voxel_map, clear_idx)
 
-    def step(self, voxel_map, p, v, goal, speed, max_speed, clear_center=None, terminal=False, margin=None,
+    def step(self, voxel_map, p, v, goal, speed, max_speed, clear_idx=None, terminal=False, margin=None,
              path_fn=None):
         """Acceleration command (3,), or None when no corridor can be built (drone off the map).
 
-        terminal=True (target phase): the MPC trades the stop-at-horizon cost for arriving at speed.
+        terminal=True (target phase): the MPC trades the stop-at-horizon cost for arriving at speed, but ONLY
+        while the corridor reaches the goal; a corridor blocked short of the box keeps the normal cost, so
+        the drone stops inside it instead of pressing into the obstacle that blocks it.
         margin: how much the corridor boxes are shrunk for the MPC (default cfg.margin_m); applied at
-        every step, so a change takes effect without re-planning the corridor.
+        every step, so a change takes effect without re-planning the corridor. A margin smaller than
+        cfg.margin_m (near the box) is also only used while the corridor reaches the goal.
         path_fn(p, goal) -> (K, 3) polyline or None: called on each re-plan only (exploration: geodesic path).
         """
         self.age += 1
-        self.mpc.set_terminal(terminal)
-        if self._needs_replan(voxel_map, p, goal, clear_center):
+        if self._needs_replan(voxel_map, p, goal, clear_idx):
             self.path = path_fn(p, goal) if path_fn is not None else None
-            self.corridor = build_corridor(voxel_map, p, goal, self.cfg, clear_center, self.path)
+            self.corridor = build_corridor(voxel_map, p, goal, self.cfg, clear_idx, self.path)
             self.age = 0
             self.n_replans += 1
         if self.corridor is None:
+            self.terminal_active = False
             return None
+        reaches = bool(self.corridor.reached)
+        self.terminal_active = bool(terminal) and reaches
+        self.mpc.set_terminal(self.terminal_active)
         m = self.mpc_cfg
         refs, box = self.corridor.reference(p, speed, m.horizon, m.dt)
         margin = self.cfg.margin_m if margin is None else margin
+        if not reaches:
+            margin = max(margin, self.cfg.margin_m)
         box_lo, box_hi = self.corridor.lo[box], self.corridor.hi[box]
         mid = (box_lo + box_hi) / 2
         lo, hi = np.minimum(box_lo + margin, mid), np.maximum(box_hi - margin, mid)

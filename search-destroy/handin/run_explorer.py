@@ -83,6 +83,9 @@ def main():
                       f"margin={ex.margin:.2f} path={ex.path_len:.0f}m geo={ex.geo_ms:.1f}ms unreach={ex.n_unreachable} "
                       f"sw/min={ex.switches_min:.0f} uturns={ex.n_uturns} disp8s={ex.stuck_disp:.1f} esc={ex.n_escapes}"
                       f"{'(' + ex.escape_level + '/' + ex.stuck_reason + ')' if ex.n_escapes else ''} "
+                      f"sight={ex.delta_deg:.1f}deg lost={ex.lost_s:.1f}s floor={int(ex.floor_on)} reacq={int(ex.reacquire)} "
+                      f"obst={ex.obstacle_pts} strikes={ex.n_strikes}"
+                      f"{'(' + ex.strike_abort + ')' if ex.strike_abort else ''} "
                       f"box_dist={info['distance_m']:.1f} act={np.round(action, 2)}")
             if terminated or truncated:
                 outcome = "success" if info["is_success"] else "collision" if info["collision"] else "terminated"

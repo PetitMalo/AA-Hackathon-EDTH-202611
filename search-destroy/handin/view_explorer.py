@@ -22,7 +22,9 @@ from handin.run_explorer import map_rgb
 FPV_SIZE = (640, 360)
 MAP_PX = 600
 MODE_COLOURS = {"init": "gray", "explore": "deepskyblue", "target": "orange", "attack": "red", "hover": "yellow",
-                "scan": "violet", "climb": "springgreen"}
+                "scan": "violet", "climb": "springgreen", "strike": "orangered", "brake": "hotpink",
+                "rise": "lightgreen",
+                "dive": "cyan"}
 
 
 class Viewer:
@@ -121,7 +123,10 @@ class Viewer:
             (f"goal switches {ex.switches_min:4.0f}/min    U-turns {ex.n_uturns}    "
              f"8 s displacement {ex.stuck_disp:5.1f} m    escapes {ex.n_escapes}"
              + (f" (last: {ex.escape_level}, {ex.stuck_reason})" if ex.n_escapes else ""), "violet"),
-            (f"sticks r/p/y/t {np.round(ex.action, 2)}", "white"),
+            (f"sticks r/p/y/t {np.round(ex.action, 2)}    sight {ex.delta_deg:5.1f} deg below    "
+             f"lost {ex.lost_s:4.1f} s    floor {'on' if ex.floor_on else 'off'}"
+             f"{'    REACQUIRE' if ex.reacquire else ''}    strikes {ex.n_strikes}"
+             + (f" (last abort: {ex.strike_abort})" if ex.strike_abort else ""), "white"),
             ("map: red true track, yellow estimate, magenta goal, blue frontiers, green obstacles", "gray"),
             ("SPACE pause   N next flight   F fast   ESC quit" + ("   [FAST]" if self.fast else ""), "gray"),
         ]

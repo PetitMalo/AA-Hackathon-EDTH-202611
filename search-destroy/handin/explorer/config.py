@@ -65,7 +65,55 @@ class FrontierConfig:
 class TargetConfig:
     box_center_z_m: float = 0.78       # the 1.55 m high box rests on the ground
     ema: float = 0.3                   # smoothing of successive target estimates
-    lost_timeout_s: float = 6.         # keep chasing the last estimate this long without detection
+    lost_timeout_s: float = 6.         # keep chasing the last estimate this long without detection ...
+    lost_timeout_confident_s: float = 25.  # ... this long for a well localised box (box voxels known, or ...
+    confident_detections: int = 10     # ... detected this many times): the camera is kept on it meanwhile
+    dismiss_dist_m: float = 8.         # drone this close (horizontally) to the estimate ...
+    dismiss_s: float = 3.              # ... without seeing the box for this long: the estimate was wrong, forget it
+    # box voxels: the only voxels the corridor treats as free near the target (everything else stays an obstacle)
+    box_depth_tol_m: float = 1.5       # bbox pixels within this of the box depth are the box (background is farther)
+    box_voxel_max_range_m: float = 30. # only from depth closer than this (noise 3 % of the range)
+    box_max_z_m: float = 2.            # the box is 1.55 m high
+    box_max_dist_m: float = 3.         # and within this (horizontally) of the estimate
+    box_reset_m: float = 5.            # the estimate jumped this far: forget the box voxels
+    max_box_voxels: int = 40
+
+
+@dataclass
+class PursuitConfig:
+    """Camera-locked pursuit of the box (target.py TargetPursuit): nose on the box at all times, straight line
+    of sight to its centre at los_deg below the horizon, pitch floor so the box never leaves the image."""
+    los_deg: float = 10.               # line of sight: altitude = box_z + d_h tan(los): 18 m at 100 m, 4.3 m at 20 m
+    los_gain: float = 0.5              # C3: goal altitude correction from the sight angle measured in the image
+    min_height_m: float = 0.5          # goal never lower than this above the box centre
+    view_margin_deg: float = 5.        # C4: keep the box this far above the bottom edge of the image
+    look_dist_m: float = 10.           # C1: nose aimed at a point this far along the box azimuth
+    strike_speed_m_s: float = 8.       # contact speed (the drag + C4 floor at 10 deg settle there)
+    brake_m_s2: float = 1.             # speed cap sqrt(v_strike^2 + 2 brake (d - strike_dist)): gentle, mostly drag
+    strike_dist_m: float = 12.         # strike: own controller on the line of sight from this horizontal distance ...
+    strike_fresh_s: float = 0.5        # ... box detected less than this ago ...
+    strike_gain: float = 2.            # 1/s, velocity error -> acceleration
+    aim_z_m: float = 0.78              # S1: strike aimed at the box centre height, not the estimate's z ...
+    min_aim_z_m: float = 0.6           # ... and never lower (the ground limit is 0.2 m)
+    lost_abort_s: float = 1.           # strike given up when the box is not seen for this long ...
+    obstacle_frames: int = 3           # ... or an obstacle is on the line this many frames in a row ...
+    commit_dist_m: float = 5.          # ... except in the last metres: steering frozen, no giving up
+    abort_brake_s: float = 1.5         # S3: giving up = brake along the line and climb abort_climb_m (no swerve),
+    abort_climb_m: float = 2.          #     at least this long, then the corridor + MPC again
+    # T3: box not seen and too steep below (too high / too close): back onto the line of sight
+    reacq_after_s: float = 0.5
+    reacq_excess_deg: float = 10.      # sight angle (from the estimate) above los_deg + this
+    reacq_max_back_m: float = 30.
+    # depth-image check of the strike line (low obstacles live in the map's ground layer)
+    depth_stride: int = 3
+    max_depth_m: float = 38.           # depth at or beyond this = no return
+    tube_m: float = 0.8                # depth points this close to the drone -> box segment are obstacles ...
+    ground_m: float = 0.35             # ... unless lower than this (ground, depth noise) ...
+    box_clear_m: float = 1.5           # ... or the box itself: the tracker's box voxels; until they are known,
+                                       # the points this close (horizontally) to the estimate ...
+    bbox_pad_px: int = 3               # ... and (S2) the detection box pixels, padded by this, at the box depth ...
+    box_depth_tol_m: float = 1.        # ... or behind it (minus this): close up, the box fills the view
+    min_obstacle_pts: int = 3          # this many obstacle points (noise filter)
 
 
 @dataclass
@@ -124,8 +172,8 @@ class CorridorConfig:
     max_box_size_m: float = 30.        # per axis
     margin_m: float = 0.8               # boxes shrunk by this for the MPC, away from the target (and when exploring)
     margin_near_m: float = 0.2          # ... and by this once the drone is within near_target_radius_m of the box
+                                        # (only while the corridor reaches the box, see CorridorPlanner.step)
     near_target_radius_m: float = 5.
-    target_clear_radius_m: float = 4.  # voxels this close to the target estimate count as free (contact = success)
     z_min_m: float = 1.                # altitude floor in the MPC
     reactive_safety: bool = False      # also run the old depth-image brake-and-climb layer on top of the MPC
 
@@ -138,7 +186,8 @@ class MPCConfig:
     w_acc: float = 0.02                # acceleration effort
     w_jerk: float = 0.3                # acceleration change (smooth attitude)
     w_term_vel: float = 2.             # terminal velocity -> 0: the plan can always stop inside the corridor
-    w_term_vel_terminal: float = 0.1   # target phase: arrive at the box at speed, not stopped
+    w_term_vel_terminal: float = 0.1   # target phase: arrive at the box at speed, not stopped (only while the
+                                       # corridor reaches the box, otherwise w_term_vel)
     w_slack_quad: float = 200.         # soft box constraints
     w_slack_lin: float = 200.
     a_max_xy_m_s2: float = 12.         # ~ g tan(50 deg), the controller's tilt limit
@@ -152,6 +201,27 @@ class MPCConfig:
     admm_max_iter: int = 400
     admm_eps_abs: float = 1e-4
     admm_eps_rel: float = 1e-4
+
+
+@dataclass
+class StartConfig:
+    """Start of every flight (start.py): rise above the start point, then a nose-down dive toward the centre,
+    then the planning. A target detection at any time ends it."""
+    enabled: bool = True
+    rise_m: float = 50.                # climb this much above the start altitude (start 5-25 m -> 55-75 m)
+    rise_speed_m_s: float = 8.
+    rise_tol_m: float = 2.
+    rise_timeout_s: float = 15.
+    stall_speed_m_s: float = 0.5       # rise: vertical speed below this ...
+    stall_s: float = 2.                # ... this long (after 1.5 s) -> something above, stop climbing
+    dive_pitch_deg: float = 45.        # nose down: the camera (tilted 25 deg up) looks ~20 deg below the horizon
+    dive_max_speed_m_s: float = 20.    # past this, the pitch is eased off (dive_speed_gain rad per m/s)
+    dive_speed_gain: float = 0.05
+    dive_descent_m_s: float = 6.
+    dive_end_alt_m: float = 25.        # above the rooftops (~20 m max): planning starts here ...
+    dive_stop_radius_m: float = 60.    # ... or this close to the arena centre ...
+    dive_timeout_s: float = 15.        # ... or after this long
+    max_roll_deg: float = 30.
 
 
 @dataclass
@@ -223,8 +293,12 @@ class ExplorerConfig:
     mpc: MPCConfig = field(default_factory=MPCConfig)
     escape: EscapeConfig = field(default_factory=EscapeConfig)
     geodesic: GeodesicConfig = field(default_factory=GeodesicConfig)
+    pursuit: PursuitConfig = field(default_factory=PursuitConfig)
+    start: StartConfig = field(default_factory=StartConfig)
     # Evaluator flight phases: the mission latches from "exploration" to "terminal" the first time
     # the policy reports its target mode (see fpv_sim.scripts.evaluate).
     phase_of_mode: dict = field(default_factory=lambda: {"explore": "exploration", "hover": "exploration",
                                                          "scan": "exploration", "climb": "exploration",
-                                                         "target": "terminal", "attack": "terminal"})
+                                                         "rise": "exploration", "dive": "exploration",
+                                                         "target": "terminal", "attack": "terminal",
+                                                         "strike": "terminal", "brake": "terminal"})
