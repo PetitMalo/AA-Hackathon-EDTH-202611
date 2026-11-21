@@ -32,9 +32,11 @@ class CorridorMPC:
 
         z = np.zeros((n, n))
         eye = np.eye(n)
-        p_aa = 2 * (c.w_pos * self.Sp.T @ self.Sp + c.w_acc * eye + c.w_jerk * self.D.T @ self.D
-                    + c.w_term_vel * np.outer(sv_n, sv_n))
-        self.P = np.block([[p_aa, z], [z, 2 * c.w_slack_quad * eye]])
+        p_base = 2 * (c.w_pos * self.Sp.T @ self.Sp + c.w_acc * eye + c.w_jerk * self.D.T @ self.D)
+        self.P = np.block([[p_base + 2 * c.w_term_vel * np.outer(sv_n, sv_n), z],
+                           [z, 2 * c.w_slack_quad * eye]])
+        self.P_terminal = np.block([[p_base + 2 * c.w_term_vel_terminal * np.outer(sv_n, sv_n), z],
+                                    [z, 2 * c.w_slack_quad * eye]])
         a = np.block([[eye, z],               # acceleration bounds
                       [self.Sv, z],           # velocity bounds
                       [self.Sp, eye],         # p + s >= lo
@@ -51,6 +53,8 @@ class CorridorMPC:
         c = self.cfg
         k = self.P + c.admm_sigma * np.eye(self.P.shape[0]) + self.rho * self.A.T @ self.A
         self.K_inv = np.linalg.inv(k)
+        k_t = self.P_terminal + c.admm_sigma * np.eye(self.P.shape[0]) + self.rho * self.A.T @ self.A
+        self.K_inv_terminal = np.linalg.inv(k_t)
 
     def reset(self):
         n = self.n
@@ -60,6 +64,13 @@ class CorridorMPC:
         self.a_prev = np.zeros(3)
         self.iters = 0
         self.predicted = None
+
+    def set_terminal(self, terminal):
+        """Target phase = a lighter terminal-velocity cost: arrive at the box fast instead of stopped."""
+        terminal = bool(terminal)
+        if terminal != getattr(self, "_terminal", False):
+            self._terminal = terminal
+            self.reset()
 
     # ------------------------------------------------------------------ public API
     def solve(self, p0, v0, p_ref, lo, hi, v_max_xy):
@@ -72,12 +83,14 @@ class CorridorMPC:
         p_free = p0 + self.kdt[:, None] * v0
         d0 = np.zeros((n, 3))
         d0[0] = self.a_prev
+        w_term = c.w_term_vel_terminal if getattr(self, "_terminal", False) else c.w_term_vel
         q_a = 2 * (c.w_pos * self.Sp.T @ (p_free - p_ref) - c.w_jerk * self.D.T @ d0
-                   + c.w_term_vel * self.Sv[-1][:, None] * v0[None, :])
+                   + w_term * self.Sv[-1][:, None] * v0[None, :])
         q = np.vstack([q_a, np.full((n, 3), c.w_slack_lin)])
 
         a_max = np.array([c.a_max_xy_m_s2, c.a_max_xy_m_s2, c.a_max_z_m_s2])
-        v_max = np.array([c.v_max_margin * v_max_xy] * 2 + [c.v_max_z_m_s])
+        v_max_z = c.v_max_z_terminal_m_s if getattr(self, "_terminal", False) else c.v_max_z_m_s
+        v_max = np.array([c.v_max_margin * v_max_xy] * 2 + [v_max_z])
         # Velocity limit never tighter than what can be reached from v0 (keeps the QP feasible after a fast start).
         v_lim = np.maximum(v_max, np.abs(v0) - 0.8 * a_max * self.kdt[:, None])
         inf = np.full((n, 3), np.inf)
@@ -104,12 +117,15 @@ class CorridorMPC:
 
     def _admm(self, q, l, u):
         c = self.cfg
-        P, A = self.P, self.A
+        A = self.A
         sigma, alpha = c.admm_sigma, c.admm_alpha
         x, z, y = self.x, np.clip(self.z, l, u), self.y
         it = 0
         for it in range(1, c.admm_max_iter + 1):
-            x_t = self.K_inv @ (sigma * x - q + A.T @ (self.rho * z - y))
+            # P / K_inv are read through properties: _factor() may swap them mid-loop on a rho update.
+            P, K_inv = (self.P_terminal, self.K_inv_terminal) if getattr(self, "_terminal", False) \
+                else (self.P, self.K_inv)
+            x_t = K_inv @ (sigma * x - q + A.T @ (self.rho * z - y))
             z_t = A @ x_t
             x = alpha * x_t + (1 - alpha) * x
             z_relax = alpha * z_t + (1 - alpha) * z
