@@ -64,11 +64,51 @@ class ControlConfig:
 
 
 @dataclass
+class CorridorConfig:
+    """Safe flight corridor: chain of free axis-aligned voxel boxes along the path (occupied OR unknown = not free)."""
+    replan_every: int = 15             # frames (0.5 s at 30 Hz)
+    goal_moved_m: float = 2.           # re-plan when the goal moves more than this
+    outside_tol_m: float = 1.          # re-plan when the drone is this far outside every box
+    max_boxes: int = 6
+    max_length_m: float = 60.          # the path is truncated to this length
+    max_box_size_m: float = 30.        # per axis
+    margin_m: float = 0.35              # boxes shrunk by this for the MPC (no obstacle inflation for now)
+    target_clear_radius_m: float = 4.  # voxels this close to the target estimate count as free (contact = success)
+    z_min_m: float = 1.                # altitude floor in the MPC
+    reactive_safety: bool = False      # also run the old depth-image brake-and-climb layer on top of the MPC
+
+
+@dataclass
+class MPCConfig:
+    horizon: int = 20                  # steps
+    dt: float = 0.1                    # s, MPC model step (the agent itself runs at 30 Hz)
+    w_pos: float = 1.                  # position tracking
+    w_acc: float = 0.02                # acceleration effort
+    w_jerk: float = 0.3                # acceleration change (smooth attitude)
+    w_term_vel: float = 2.             # terminal velocity -> 0: the plan can always stop inside the corridor
+    w_slack_quad: float = 200.         # soft box constraints
+    w_slack_lin: float = 200.
+    a_max_xy_m_s2: float = 6.5         # ~ g tan(35 deg), the controller's tilt limit
+    a_max_z_m_s2: float = 4.
+    v_max_z_m_s: float = 3.
+    v_max_margin: float = 1.2          # |v_xy| per axis <= margin * v_max of the current mode
+    admm_rho: float = 0.5
+    admm_sigma: float = 1e-6
+    admm_alpha: float = 1.6
+    admm_max_iter: int = 400
+    admm_eps_abs: float = 1e-4
+    admm_eps_rel: float = 1e-4
+
+
+@dataclass
 class ExplorerConfig:
     dt: float = 1. / 30.
     g: float = 9.8
+    use_mpc: bool = True               # corridor + MPC guidance; False -> the original waypoint controller
     camera: CameraConfig = field(default_factory=CameraConfig)
     map: MapConfig = field(default_factory=MapConfig)
     frontier: FrontierConfig = field(default_factory=FrontierConfig)
     target: TargetConfig = field(default_factory=TargetConfig)
     control: ControlConfig = field(default_factory=ControlConfig)
+    corridor: CorridorConfig = field(default_factory=CorridorConfig)
+    mpc: MPCConfig = field(default_factory=MPCConfig)

@@ -47,18 +47,28 @@ class WaypointController:
         v_des[2] = np.clip(c.alt_kp * e[2], -3., 3.)
 
         # --- reactive safety: obstacle along the velocity vector -> brake and climb
-        self.obstacle_ahead = False
-        if depth_m is not None and cam is not None:
-            d_obs = self._depth_along_velocity(depth_m, v, *cam)
-            if d_obs < min(c.safety_depth_m + np.linalg.norm(v[:2]), ignore_obstacles_beyond):
-                self.obstacle_ahead = True
-                v_des[:2] = 0.
-                v_des[2] = 2.
+        if self.check_obstacle_ahead(v, depth_m, cam, ignore_obstacles_beyond):
+            v_des[:2] = 0.
+            v_des[2] = 2.
 
-        # --- acceleration setpoint (+ drag feed-forward)
+        # --- acceleration setpoint
         a = np.zeros(3)
-        a[:2] = c.vel_gain * (v_des[:2] - v[:2]) + self.drag_k * np.linalg.norm(v) * v[:2]
+        a[:2] = c.vel_gain * (v_des[:2] - v[:2])
         a[2] = c.alt_kd * (v_des[2] - v[2])
+        return self.accel_to_sticks(a, v, yaw, yaw_stick)
+
+    def yaw_stick_toward(self, p, yaw, point):
+        """Yaw stick that turns the nose toward `point` (horizontal plane), and the heading error."""
+        e = point[:2] - p[:2]
+        des_yaw = np.arctan2(e[1], e[0]) if np.linalg.norm(e) > 2. else yaw
+        yaw_err = wrap(des_yaw - yaw)
+        return -self.cfg.yaw_gain * yaw_err, yaw_err
+
+    def accel_to_sticks(self, a, v, yaw, yaw_stick):
+        """Desired world acceleration (without drag) -> (roll, pitch, yaw, throttle) sticks, drag fed forward."""
+        c = self.cfg
+        a = np.array(a, dtype=float)
+        a[:2] = a[:2] + self.drag_k * np.linalg.norm(v) * v[:2]
 
         # --- acceleration -> attitude + collective thrust (yaw frame)
         cy, sy = np.cos(yaw), np.sin(yaw)
@@ -74,6 +84,14 @@ class WaypointController:
         full = np.radians(c.max_stick_deg)
         sticks = np.array([roll / full, pitch / full, yaw_stick, throttle])
         return np.clip(sticks, -1., 1.).astype(np.float32)
+
+    def check_obstacle_ahead(self, v, depth_m, cam, ignore_obstacles_beyond=np.inf):
+        """Reactive layer: depth image shows an obstacle along the velocity, closer than the braking distance."""
+        self.obstacle_ahead = False
+        if depth_m is not None and cam is not None:
+            d_obs = self._depth_along_velocity(depth_m, v, *cam)
+            self.obstacle_ahead = d_obs < min(self.cfg.safety_depth_m + np.linalg.norm(v[:2]), ignore_obstacles_beyond)
+        return self.obstacle_ahead
 
     def _depth_along_velocity(self, depth_m, v, cam_pos, cam_R, camera, half_win=10):
         """Robust min depth around the pixel where the velocity vector points (inf if out of view / slow)."""

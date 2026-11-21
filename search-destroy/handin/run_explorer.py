@@ -78,10 +78,13 @@ def main():
                 goal = "-" if ex.goal is None else np.round(ex.goal, 1)
                 print(f"t={step / 30:5.1f}s mode={ex.mode:8s} pos_est={np.round(ex.position, 1)} "
                       f"pos_true={np.round(env.pos[0], 1)} goal={goal} frontiers={ex.n_frontiers} "
-                      f"obst={ex.obstacle_ahead} box_dist={info['distance_m']:.1f} act={np.round(action, 2)}")
+                      f"obst={ex.obstacle_ahead} boxes={ex.n_boxes}{'(blk)' if ex.corridor_blocked else ''} "
+                      f"mpc={ex.mpc_ms:.1f}ms/{ex.mpc_iters}it box_dist={info['distance_m']:.1f} act={np.round(action, 2)}")
             if terminated or truncated:
                 outcome = "success" if info["is_success"] else "collision" if info["collision"] else "terminated"
                 break
+        if agent.explorer.cfg.use_mpc:
+            print(f"corridor replans={agent.explorer.planner.n_replans}")
         print(f"outcome={outcome} t={step / 30:.1f}s mean_latency={1e3 * np.mean(lat):.1f}ms "
               f"max_latency={1e3 * np.max(lat):.1f}ms")
         box_xy = np.array(p.getBasePositionAndOrientation(env.TERRAIN_IDS[0], physicsClientId=env.CLIENT)[0][:2])
