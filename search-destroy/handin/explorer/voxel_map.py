@@ -4,6 +4,8 @@ Each voxel is UNKNOWN (never observed), FREE or OCCUPIED. Occupancy is a small i
 log-odds so that depth noise and pose noise do not flip voxels on a single frame.
 A frontier voxel is a FREE voxel with at least one UNKNOWN 6-neighbour; the frontier
 grid is kept up to date incrementally, only in the region touched by the last frame.
+Above cfg.sky_ceiling_m the target cannot be: unknown voxels there do not make frontiers and
+no frontier is kept there (the camera, tilted up, otherwise keeps finding "new" sky).
 """
 
 import numpy as np
@@ -113,6 +115,9 @@ class VoxelMap:
                          [(int(lo[i] == pad_lo[i]), int(hi[i] == pad_hi[i])) for i in range(3)],
                          constant_values=False)
         # `unknown` now covers [lo-1, hi+1) on every axis; its centre is [lo, hi).
+        ceiling = getattr(self.cfg, "sky_ceiling_m", np.inf)
+        z_pad = self.origin[2] + (np.arange(lo[2] - 1, hi[2] + 1) + .5) * self.res   # centres of unknown's z axis
+        unknown[:, :, z_pad >= ceiling] = False                       # sky above the ceiling: "already seen"
         core = (slice(1, -1),) * 3
         any_unknown_nb = np.zeros(unknown[core].shape, dtype=bool)
         for axis in range(3):
@@ -122,7 +127,8 @@ class VoxelMap:
                 any_unknown_nb |= unknown[tuple(sl)]
         region = (slice(lo[0], hi[0]), slice(lo[1], hi[1]), slice(lo[2], hi[2]))
         free = self.observed[region] & (self.logodds[region] <= 0)
-        self.frontier[region] = free & any_unknown_nb
+        below = (self.origin[2] + (np.arange(lo[2], hi[2]) + .5) * self.res) < ceiling
+        self.frontier[region] = free & any_unknown_nb & below[None, None, :]
 
     def frontier_points(self, z_band_m=None, xy_limit_m=None):
         """World centres (N, 3) of the frontier voxels, optionally restricted to an altitude band and a square."""

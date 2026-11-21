@@ -123,6 +123,8 @@ class GainCostFrontierPolicy(FrontierPolicy):
         self.heading_w = cfg.heading_w              # U-turn penalty (0 = off)
         self.hysteresis = cfg.hysteresis            # switch only if +25 % better
         self.prior_sigma = cfg.prior_sigma_m        # width of the prior around the centre (m)
+        self.ground_full = cfg.ground_full_m        # gain weight 1 below this altitude, 0 at the sky ceiling
+        self.continuity_w, self.continuity_m = cfg.continuity_w, cfg.continuity_m
         self.ray_dirs = fibonacci_sphere(cfg.n_rays)
         self.reset()
 
@@ -167,6 +169,10 @@ class GainCostFrontierPolicy(FrontierPolicy):
 
         # 3. Score every candidate
         scores = np.array([self.utility(g, p, context, vmap, d, field) for g, d in zip(cands, dists)])
+        # Goal just explored: keep going in the same area rather than swinging to the other side
+        if context.get("replan_reason") == "explored" and self.prev_goal is not None and self.continuity_w > 0:
+            near = np.exp(-np.linalg.norm(cands - self.prev_goal, axis=1) / self.continuity_m)
+            scores = scores * (1. + self.continuity_w * near)
         best = int(np.argmax(scores))
         goal, u_best = cands[best], scores[best]
         self.last_scores = (cands, scores)
@@ -200,10 +206,11 @@ class GainCostFrontierPolicy(FrontierPolicy):
 
     # ---------- information gain by ray casting ----------
     def gain(self, g, vmap):
-        """Sum of the prior over the UNKNOWN voxels visible from g (occlusions included).
+        """Sum of prior x altitude weight over the UNKNOWN voxels visible from g (occlusions included).
 
         All rays at once: samples every half voxel, a ray stops at its first occupied voxel
-        or when it leaves the grid; each unknown voxel counts once.
+        or when it leaves the grid; each unknown voxel counts once. Voxels at or above the sky
+        ceiling count for nothing (the target is on the ground).
         """
         res = vmap.res
         steps = np.arange(1, int(self.max_range / (res / 2)) + 1) * (res / 2)
@@ -220,7 +227,16 @@ class GainCostFrontierPolicy(FrontierPolicy):
         if not seen.any():
             return 0.
         flat = np.unique(np.ravel_multi_index((t[0][seen], t[1][seen], t[2][seen]), vmap.shape))
-        return float(self.prior(np.stack(np.unravel_index(flat, vmap.shape), axis=1), vmap).sum())
+        idx = np.stack(np.unravel_index(flat, vmap.shape), axis=1)
+        return float((self.prior(idx, vmap) * self.altitude_weight(idx, vmap)).sum())
+
+    def altitude_weight(self, idx, vmap):
+        """1 below ground_full_m (where the box can be), linearly down to 0 at the sky ceiling."""
+        ceiling = getattr(vmap.cfg, "sky_ceiling_m", np.inf)
+        z = vmap.index_to_world(idx)[:, 2]
+        if not np.isfinite(ceiling):
+            return np.ones(len(z))
+        return np.clip((ceiling - z) / max(ceiling - self.ground_full, 1e-6), 0., 1.)
 
     def prior(self, idx, vmap):
         """Prior on the target position: Gaussian around the arena centre. Summed over UNKNOWN voxels only,
@@ -254,6 +270,8 @@ class FrontierManager:
         self.time_s = 0.
         self.blacklist = []                              # (point, expiry time, radius)
         self.last_reason = None
+        self.switch_times = []                           # times of the goal switches (last 60 s)
+        self.n_switches = self.n_uturns = 0
         self._forced = False                             # force_replan: re-plan on the next update
         self._z_band, self._z_band_until = None, -np.inf  # widen_z_band: temporary altitude band
         self.policy.reset()
@@ -300,9 +318,26 @@ class FrontierManager:
             new_goal = self.policy.select(cands, ctx)
             if new_goal is None or self.goal is None or np.linalg.norm(new_goal - self.goal) > 1e-6:
                 self.goal_age_s = 0.                     # commit timer restarts only on a new goal
+                self._count_switch(self.goal, new_goal, np.asarray(context["position"], float))
             self.goal = new_goal
             self.last_reason = reason
         return self.goal
+
+    def _count_switch(self, old, new, p):
+        """Stats: goal switches (per minute) and U-turns (new goal > uturn_deg round from the old one)."""
+        if old is None or new is None:
+            return
+        self.n_switches += 1
+        self.switch_times = [t for t in self.switch_times if t > self.time_s - 60.] + [self.time_s]
+        a, b = (old - p)[:2], (new - p)[:2]
+        na, nb = np.linalg.norm(a), np.linalg.norm(b)
+        if na > 1e-6 and nb > 1e-6 and np.dot(a, b) / (na * nb) < np.cos(np.radians(self.cfg.uturn_deg)):
+            self.n_uturns += 1
+
+    @property
+    def switches_per_min(self):
+        recent = [t for t in self.switch_times if t > self.time_s - 60.]
+        return len(recent) * 60. / max(min(self.time_s, 60.), 1.)
 
     def _replan_reason(self, voxel_map, position):
         if self._forced:
@@ -318,6 +353,6 @@ class FrontierManager:
             idx, valid = voxel_map.world_to_index(self.goal[None])
             if not valid[0] or not voxel_map.frontier[tuple(idx[0])]:
                 return "explored"                        # the goal got explored (or became occupied)
-            if self.policy.reevaluate_periodically:
-                return "periodic"
+        if self.policy.reevaluate_periodically and self.frame % self.cfg.periodic_every == 0:
+            return "periodic"
         return None

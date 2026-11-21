@@ -118,7 +118,8 @@ class Viewer:
              "white"),
             (f"goal {None if ex.goal is None else np.round(ex.goal, 1)}    path {ex.path_len:5.1f} m    "
              f"unreachable {ex.n_unreachable}    geo {ex.geo_ms:4.1f} ms", "magenta"),
-            (f"8 s displacement {ex.stuck_disp:5.1f} m    escapes {ex.n_escapes}"
+            (f"goal switches {ex.switches_min:4.0f}/min    U-turns {ex.n_uturns}    "
+             f"8 s displacement {ex.stuck_disp:5.1f} m    escapes {ex.n_escapes}"
              + (f" (last: {ex.escape_level}, {ex.stuck_reason})" if ex.n_escapes else ""), "violet"),
             (f"sticks r/p/y/t {np.round(ex.action, 2)}", "white"),
             ("map: red true track, yellow estimate, magenta goal, blue frontiers, green obstacles", "gray"),

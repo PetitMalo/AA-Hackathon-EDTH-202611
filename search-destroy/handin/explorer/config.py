@@ -24,6 +24,8 @@ class MapConfig:
     z_range_m: tuple = (0., 40.)
     depth_stride: int = 4              # use 1 pixel out of N in each direction for ray casting
     max_ray_m: float = 38.             # depth beyond this is treated as free space, no hit
+    sky_ceiling_m: float = 24.         # exploration only: unknown voxels above count as already seen (no frontier,
+                                       # no gain), the target is on the ground; the corridor still treats them unknown
     hit_logodds: int = 3
     miss_logodds: int = -1
     logodds_clamp: int = 20
@@ -31,7 +33,8 @@ class MapConfig:
 
 @dataclass
 class FrontierConfig:
-    recompute_every: int = 15          # frames (0.5 s at 30 Hz)
+    recompute_every: int = 15          # frames (0.5 s at 30 Hz): "goal explored?" check
+    periodic_every: int = 45           # frames (1.5 s): periodic re-scoring of the goal (GainCostFrontierPolicy)
     z_band_m: tuple = (3., 20.)        # only frontiers in this altitude band are candidates
     xy_limit_m: float = 240.           # stay well inside the 250 m floor / 350 m arena
     min_dist_m: float = 8.             # ignore frontiers right next to the drone
@@ -48,8 +51,13 @@ class FrontierConfig:
     n_rays: int = 128                  # rays per viewpoint (Fibonacci sphere)
     gain_range_m: float = 15.          # ray length for the information gain
     lam: float = 0.08                  # 1/m, distance discount exp(-lam d)
-    heading_w: float = 0.5             # U-turn penalty (0 = off)
-    hysteresis: float = 0.25           # switch goal only if the new one is 25 % better
+    heading_w: float = 0.8             # U-turn penalty (0 = off)
+    hysteresis: float = 0.5            # switch goal only if the new one is 50 % better
+    continuity_w: float = 0.5          # goal just explored: candidates near it get up to +50 % ...
+    continuity_m: float = 15.          # ... decaying with the distance to it (exp(-d / continuity_m))
+    ground_full_m: float = 4.          # gain: unknown voxels weigh 1 below this altitude (where the box can be),
+                                       # then linearly less, 0 at map.sky_ceiling_m
+    uturn_deg: float = 120.            # stats: a goal switch this far round from the previous one is a U-turn
     prior_sigma_m: float = 100.        # Gaussian prior on the target around the arena centre
 
 
@@ -62,7 +70,7 @@ class TargetConfig:
 
 @dataclass
 class ControlConfig:
-    cruise_speed_m_s: float = 8.
+    cruise_speed_m_s: float = 12.      # exploration speed cap; more speed = more pitch = camera lower
     approach_speed_m_s: float = 12.         # target phase, far from the box
     approach_glide_slope: float = 0.15      # descend toward the box over a long, shallow ramp (target_z + slope*dist)
     # Terminal approach: the speed cap follows a braking profile down to the terminal speed at
@@ -152,7 +160,7 @@ class GeodesicConfig:
     enabled: bool = True
     cell_m: float = 4.                 # coarse cell = 2 x 2 x 2 voxels, traversable only if all are known free
     half_xy_m: float = 100.            # window around the drone; frontiers outside it keep the Euclidean distance
-    z_range_m: tuple = (0., 32.)       # covers the escape climb (26 m) and the widened frontier band (30 m)
+    z_range_m: tuple = (0., 32.)       # covers the escape climb (26 m) and the widened frontier band (24 m)
     clearance_weight: float = 1.       # edge cost x (1 + w / clearance in cells): stay off the walls
     ground_m: float = 2.               # occupied voxels below this are the ground: not counted in the clearance
     start_search_cells: int = 2        # drone cell not traversable (next to a wall): nearest one this close
@@ -195,7 +203,7 @@ class EscapeConfig:
     climb_stall_s: float = 2.          # vertical speed below climb_stall_speed this long (after 1 s) -> abort
     climb_stall_speed_m_s: float = 0.3
     column_half_width_m: float = 2.    # the column above the drone must hold no OCCUPIED voxel (roof, canopy)
-    widen_z_band_m: tuple = (3., 30.)  # after a climb, frontiers in this band for widen_s
+    widen_z_band_m: tuple = (3., 24.)  # after a climb, frontiers in this band for widen_s (up to map.sky_ceiling_m)
     widen_s: float = 20.
 
 

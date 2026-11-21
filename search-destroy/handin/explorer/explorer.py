@@ -58,6 +58,8 @@ class StepInfo:
     path_len: float = float("nan")         # length of the geodesic path to the goal (m)
     geo_ms: float = 0.                     # time of the last geodesic field computation
     n_unreachable: int = 0                 # frontier candidates without a flyable path (last selection)
+    switches_min: float = 0.               # frontier goal switches per minute (last 60 s)
+    n_uturns: int = 0                      # goal switches to the other side (> frontier.uturn_deg)
     action: np.ndarray = field(default_factory=lambda: np.zeros(4, dtype=np.float32))
 
 
@@ -197,7 +199,8 @@ class FrontierExplorer:
     def _geo_info(self):
         pol = self.frontiers.policy
         return {"path": self.planner.path, "path_len": self.path_len,
-                "geo_ms": self.geo.ms, "n_unreachable": getattr(pol, "n_unreachable", 0)}
+                "geo_ms": self.geo.ms, "n_unreachable": getattr(pol, "n_unreachable", 0),
+                "switches_min": self.frontiers.switches_per_min, "n_uturns": self.frontiers.n_uturns}
 
     # ------------------------------------------------------------------ escape (exploration only)
     def _escape_step(self, est):
