@@ -883,7 +883,129 @@ def pick_targets(w, total, spacing=12.):
 asset_list = all_assets()
 FOOTPRINT = {a.name: footprints(a) for a in asset_list}
 
+################################################################################
+# Attack level 1: empty maps, target on the ground, always in the camera's sight.
+#
+# Sixty setups, ten per distance, distance doubling from 5 m to 160 m.
+#   v1..v10 5 m, v11..v20 10 m, v21..v30 20 m, v31..v40 40 m, v41..v50 80 m, v51..v60 160 m.
+# Each setup pairs a random ground target with a drone start at the given range, azimuth and height,
+# pitched so that the target sits inside the camera's FOV (102 deg HFOV / ~70 deg VFOV, 25 deg uptilt).
+# The map is empty apart from the 500 x 500 m ground surface, the same size as the search scenes.
+
+LEVEL_1_DISTANCES = (5., 10., 20., 40., 80., 160.)
+LEVEL_1_PER_DISTANCE = 10
+# Camera fitted to the drone onboard camera (see perception.Camera); used to bound the start attitude.
+CAM_UPTILT_DEG, CAM_HFOV_DEG, CAM_VFOV_DEG = 25., 102., 70.
+PITCH_LIMIT_DEG = 60.          # the sim's TOP_SPEED_PITCH_DEG; never start past this
+SAFETY_DEG = 3.                # keep the target off the FOV edge by this margin
+
+GRASS = (0.5, 0.65, 0.33)
+
+def _level_1_height_cap(d):
+    """Max drone height at distance d so that a start pitch exists that keeps the target inside the vertical FOV."""
+    # optical-axis elevation = UPTILT - pitch; the pitch is capped at PITCH_LIMIT_DEG (nose down).
+    # Feasible iff (UPTILT + depression) - PITCH_LIMIT <= VFOV/2 - safety.
+    max_dep = math.radians(CAM_VFOV_DEG / 2 - SAFETY_DEG + PITCH_LIMIT_DEG - CAM_UPTILT_DEG)
+    return min(30., math.tan(max_dep) * d)
+
+def _level_1_pitch_window(depression):
+    """Inclusive [lo, hi] start-pitch range, in radians, that keeps the target inside the vertical FOV."""
+    half_v = math.radians(CAM_VFOV_DEG / 2 - SAFETY_DEG)
+    limit = math.radians(PITCH_LIMIT_DEG)
+    uptilt = math.radians(CAM_UPTILT_DEG)
+    # offset of the optical axis from the target = (uptilt - pitch) + depression; bound its absolute value by half_v.
+    lo = max(-limit, uptilt + depression - half_v)
+    hi = min(limit, uptilt + depression + half_v)
+    return lo, hi
+
+def build_level_1(seed=101):
+    """Returns the level_1 terrain spec (name, setups, objects), seeded and reproducible."""
+    rng = np.random.default_rng(seed)
+    setups = []
+    for d in LEVEL_1_DISTANCES:
+        h_cap = max(2., _level_1_height_cap(d))
+        target_half = max(50., min(220., 245. - d - 5.))     # keep the drone (at distance d) inside the 500 m tile
+        for _ in range(LEVEL_1_PER_DISTANCE):
+            tx, ty = rng.uniform(-target_half, target_half, 2)
+            phi = rng.uniform(0, 2 * math.pi)
+            dx, dy = tx + d * math.cos(phi), ty + d * math.sin(phi)
+            h = rng.uniform(2., h_cap)
+            depression = math.atan2(h, d)
+            # The drone yaws toward the target, plus a small offset that keeps it inside the horizontal FOV.
+            bearing = math.atan2(ty - dy, tx - dx)
+            yaw_off = rng.uniform(-math.radians(CAM_HFOV_DEG / 2 - SAFETY_DEG - 10),
+                                  math.radians(CAM_HFOV_DEG / 2 - SAFETY_DEG - 10))
+            yaw = bearing + yaw_off
+            lo, hi = _level_1_pitch_window(depression)
+            pitch = rng.uniform(lo, hi)
+            roll = rng.uniform(-math.radians(15.), math.radians(15.))
+            target_yaw = rng.uniform(0, 2 * math.pi)
+            setups.append({
+                'target': {'position_m': [round(tx, 2), round(ty, 2), 0],
+                           'rpy_rad': [0, 0, round(target_yaw % (2 * math.pi), 4)],
+                           'context': 'attack, d={:.0f} m, h={:.1f} m'.format(d, h)},
+                'start':  {'position_m': [round(dx, 2), round(dy, 2), round(h, 2)],
+                           'rpy_rad': [round(roll, 4), round(pitch, 4), round(yaw, 4)]},
+            })
+    ground = {'type': 'surface', 'size_m': [500, 500, 0.04], 'position_m': [0, 0, -0.02],
+              'rpy_rad': [0, 0, 0], 'rgba': [*GRASS, 1]}
+    return {'name': 'level_1', 'setups': setups, 'objects': [ground]}
+
+def write_level_1():
+    spec = build_level_1()
+    (TERRAINS / 'level_1.json').write_text(json.dumps(spec, indent=1) + '\n')
+    return spec
+
+def level_1_previews(spec):
+    """Top-down and per-setup thumbnails for level_1, drawn as 2D schematics (the map is empty)."""
+    from PIL import Image, ImageDraw
+    PRE = TERRAINS / 'previews'
+    PRE.mkdir(exist_ok=True)
+    setups = spec['setups']
+
+    def to_px(x, y, w=600, half=250.):
+        return w / 2 + x / half * (w / 2 - 10), w / 2 - y / half * (w / 2 - 10)
+
+    top = Image.new('RGB', (600, 600), (60, 78, 40))
+    d = ImageDraw.Draw(top)
+    for i, s in enumerate(setups, 1):
+        tx, ty, _ = s['target']['position_m']
+        dx, dy, _ = s['start']['position_m']
+        px_t, py_t = to_px(tx, ty)
+        px_d, py_d = to_px(dx, dy)
+        d.line((px_t, py_t, px_d, py_d), fill=(120, 120, 120))
+        d.ellipse((px_d - 3, py_d - 3, px_d + 3, py_d + 3), fill=(60, 140, 230))
+        d.ellipse((px_t - 5, py_t - 5, px_t + 5, py_t + 5), outline=(255, 80, 60), width=2)
+        if i % 5 == 1:
+            d.text((px_t + 6, py_t - 6), 'v{:d}'.format(i), fill=(255, 255, 255))
+    top.save(PRE / 'level_1.png')
+
+    cols, thumb = 6, 200
+    rows = math.ceil(len(setups) / cols)
+    sheet = Image.new('RGB', (cols * thumb, rows * thumb), (40, 50, 30))
+    for i, s in enumerate(setups, 1):
+        t = Image.new('RGB', (thumb, thumb), (60, 78, 40))
+        td = ImageDraw.Draw(t)
+        tx, ty, _ = s['target']['position_m']
+        dx, dy, h = s['start']['position_m']
+        span = max(8., 2 * max(abs(tx - dx), abs(ty - dy)) + 6)
+        cx, cy = (tx + dx) / 2, (ty + dy) / 2
+        p_t = to_px(tx - cx, ty - cy, thumb, span)
+        p_d = to_px(dx - cx, dy - cy, thumb, span)
+        td.line((p_t, p_d), fill=(120, 120, 120))
+        td.ellipse((p_d[0] - 4, p_d[1] - 4, p_d[0] + 4, p_d[1] + 4), fill=(60, 140, 230))
+        td.ellipse((p_t[0] - 7, p_t[1] - 7, p_t[0] + 7, p_t[1] + 7), outline=(255, 80, 60), width=2)
+        td.text((4, 4), 'v{:d}  d~{:.0f}m  h={:.1f}m'.format(i, math.hypot(dx - tx, dy - ty), h), fill=(255, 255, 255))
+        sheet.paste(t, (thumb * ((i - 1) % cols), thumb * ((i - 1) // cols)))
+    sheet.save(PRE / 'level_1_targets.png')
+
 if __name__ == '__main__':
+    import sys
+    if '--level-1' in sys.argv:
+        spec = write_level_1()
+        level_1_previews(spec)
+        print('wrote level_1.json with {:d} setups and previews/level_1{{,_targets}}.png'.format(len(spec['setups'])))
+        sys.exit(0)
     for a in asset_list:
         write_asset(a)
     scenes = [field(), forest(), village(), city()]
