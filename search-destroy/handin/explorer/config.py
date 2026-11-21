@@ -147,6 +147,24 @@ class MPCConfig:
 
 
 @dataclass
+class GeodesicConfig:
+    """Exploration only: shortest flyable path (geodesic.py) for the frontier score and the corridor."""
+    enabled: bool = True
+    cell_m: float = 4.                 # coarse cell = 2 x 2 x 2 voxels, traversable only if all are known free
+    half_xy_m: float = 100.            # window around the drone; frontiers outside it keep the Euclidean distance
+    z_range_m: tuple = (0., 32.)       # covers the escape climb (26 m) and the widened frontier band (30 m)
+    clearance_weight: float = 1.       # edge cost x (1 + w / clearance in cells): stay off the walls
+    ground_m: float = 2.               # occupied voxels below this are the ground: not counted in the clearance
+    start_search_cells: int = 2        # drone cell not traversable (next to a wall): nearest one this close
+    los_tube_m: float = 1.             # path shortcut only if this half-width tube around it is known free
+    max_age_frames: int = 8            # a field is reused this long ...
+    max_move_m: float = 4.             # ... if the drone moved less than this
+    heading_look_m: float = 12.        # frontier heading term: direction of the first metres of the path
+    look_ahead_s: float = 1.           # nose (and speed-while-turning) aimed this far ahead along the corridor ...
+    look_ahead_min_m: float = 8.       # ... and at least this far
+
+
+@dataclass
 class EscapeConfig:
     """Exploration only: detect that the drone is stuck (city: frontiers behind buildings, blocked corridor,
     hover) and escape with a graded response: 1) re-plan with a wide blacklist, 2) yaw scan in place,
@@ -196,6 +214,7 @@ class ExplorerConfig:
     corridor: CorridorConfig = field(default_factory=CorridorConfig)
     mpc: MPCConfig = field(default_factory=MPCConfig)
     escape: EscapeConfig = field(default_factory=EscapeConfig)
+    geodesic: GeodesicConfig = field(default_factory=GeodesicConfig)
     # Evaluator flight phases: the mission latches from "exploration" to "terminal" the first time
     # the policy reports its target mode (see fpv_sim.scripts.evaluate).
     phase_of_mode: dict = field(default_factory=lambda: {"explore": "exploration", "hover": "exploration",

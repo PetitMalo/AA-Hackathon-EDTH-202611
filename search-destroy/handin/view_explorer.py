@@ -100,7 +100,10 @@ class Viewer:
             head = ex.position[:2] + 12 * np.array([np.cos(ex.yaw), np.sin(ex.yaw)])
             pygame.draw.line(s, "yellow", pos, self.world_to_map(head), 2)
             if ex.goal is not None:
-                pygame.draw.line(s, "magenta", pos, self.world_to_map(ex.goal), 1)
+                if ex.path is not None and len(ex.path) >= 2:    # geodesic path the corridor follows
+                    pygame.draw.lines(s, "magenta", False, [self.world_to_map(q) for q in ex.path], 2)
+                else:
+                    pygame.draw.line(s, "magenta", pos, self.world_to_map(ex.goal), 1)
                 pygame.draw.circle(s, "magenta", self.world_to_map(ex.goal), 5)
         if ex.target_estimate is not None:
             pygame.draw.circle(s, "orange", self.world_to_map(ex.target_estimate), 3)
@@ -113,7 +116,8 @@ class Viewer:
              if hasattr(self, "info") else "", "white"),
             (f"frontiers {ex.n_frontiers}    coverage {100 * ex.coverage:4.1f} %    obstacle ahead {ex.obstacle_ahead}",
              "white"),
-            (f"goal {None if ex.goal is None else np.round(ex.goal, 1)}", "magenta"),
+            (f"goal {None if ex.goal is None else np.round(ex.goal, 1)}    path {ex.path_len:5.1f} m    "
+             f"unreachable {ex.n_unreachable}    geo {ex.geo_ms:4.1f} ms", "magenta"),
             (f"8 s displacement {ex.stuck_disp:5.1f} m    escapes {ex.n_escapes}"
              + (f" (last: {ex.escape_level}, {ex.stuck_reason})" if ex.n_escapes else ""), "violet"),
             (f"sticks r/p/y/t {np.round(ex.action, 2)}", "white"),

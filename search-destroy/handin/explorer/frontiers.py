@@ -7,6 +7,11 @@ candidate frontiers and a context, and returns one goal. Two policies:
 - GainCostFrontierPolicy: information gain (weighted by a prior on the target position)
   x exp(-lambda * distance) x heading term, on clustered frontiers, with hysteresis.
 
+Distance: geodesic (shortest flyable path, geodesic.py) when the context provides a field
+(context["geodesic"]: GeodesicField or a callable returning one / None): frontiers it cannot reach
+are dropped, and the heading term uses the direction of the path's first metres. Euclidean otherwise,
+or when no candidate is reachable.
+
 `FrontierManager` keeps the committed goal, decides when to re-plan, tells the policy why
 (`context["replan_reason"]`) and blacklists goals abandoned on commit timeout (unreachable).
 The escape logic (progress.py) can also force a re-plan with its own wider blacklist, and widen
@@ -30,6 +35,25 @@ class FrontierPolicy:
         pass
 
 
+def geodesic_field(context):
+    """The context's GeodesicField (computed lazily if it is a callable), or None."""
+    g = context.get("geodesic")
+    g = g() if callable(g) else g
+    return g if g is not None and g.ok else None
+
+
+def path_distances(frontiers, context):
+    """(distances, field): geodesic when available and at least one frontier is reachable, else Euclidean
+    (field None). Unreachable frontiers get inf."""
+    p = np.asarray(context["position"], float)
+    field = geodesic_field(context)
+    if field is not None and len(frontiers):
+        d = field.distance(frontiers)
+        if np.isfinite(d).any():
+            return d, field
+    return np.linalg.norm(np.asarray(frontiers, float) - p, axis=1), None
+
+
 class NearestFrontierPolicy(FrontierPolicy):
     def __init__(self, min_dist_m=8., center_weight=0.):
         self.min_dist = min_dist_m
@@ -39,8 +63,11 @@ class NearestFrontierPolicy(FrontierPolicy):
         if len(frontiers) == 0:
             return None
         p = context["position"]
-        d = np.linalg.norm(frontiers - p, axis=1)
-        ok = d >= self.min_dist
+        ok = np.linalg.norm(frontiers - p, axis=1) >= self.min_dist
+        if not ok.any():
+            return None
+        d, _ = path_distances(frontiers, context)
+        ok &= np.isfinite(d)
         if not ok.any():
             return None
         cost = d + self.center_weight * np.linalg.norm(frontiers[:, :2], axis=1)
@@ -102,6 +129,8 @@ class GainCostFrontierPolicy(FrontierPolicy):
     def reset(self):
         self.prev_goal = None
         self.last_scores = None                     # (candidates, utilities) of the last call, for debugging
+        self.n_unreachable = 0                      # candidates dropped at the last call (no flyable path)
+        self.geodesic_used = False
 
     # ---------- entry point ----------
     def select(self, frontiers, context):
@@ -124,14 +153,20 @@ class GainCostFrontierPolicy(FrontierPolicy):
             return None
         cands, sizes = np.array(cands), np.array(sizes, float)
 
+        # Path length to each candidate (geodesic if possible): unreachable ones are dropped
+        dists, field = path_distances(cands, context)
+        reach = np.isfinite(dists)
+        self.n_unreachable, self.geodesic_used = int((~reach).sum()), field is not None
+        cands, sizes, dists = cands[reach], sizes[reach], dists[reach]
+
         # Bound the ray-casting cost: keep the best clusters by size x distance discount
         if len(cands) > self.max_candidates:
-            pre = sizes * np.exp(-self.lam * np.linalg.norm(cands - p, axis=1))
+            pre = sizes * np.exp(-self.lam * dists)
             keep = np.argsort(-pre)[:self.max_candidates]
-            cands = cands[keep]
+            cands, dists = cands[keep], dists[keep]
 
         # 3. Score every candidate
-        scores = np.array([self.utility(g, p, context, vmap) for g in cands])
+        scores = np.array([self.utility(g, p, context, vmap, d, field) for g, d in zip(cands, dists)])
         best = int(np.argmax(scores))
         goal, u_best = cands[best], scores[best]
         self.last_scores = (cands, scores)
@@ -141,7 +176,8 @@ class GainCostFrontierPolicy(FrontierPolicy):
         if (prev is not None and context.get("replan_reason") not in ("timeout", "reached", "escape")
                 and np.linalg.norm(prev - p) >= self.min_dist and is_still_frontier(vmap, prev)
                 and not context.get("is_blacklisted", lambda g: False)(prev)):
-            u_prev = self.utility(prev, p, context, vmap)
+            d_prev = path_distances(prev[None], context)[0][0] if field is None else field.distance(prev[None])[0]
+            u_prev = self.utility(prev, p, context, vmap, d_prev, field) if np.isfinite(d_prev) else 0.
             if u_best < (1 + self.hysteresis) * u_prev:
                 goal = prev
 
@@ -149,14 +185,17 @@ class GainCostFrontierPolicy(FrontierPolicy):
         return goal
 
     # ---------- utility ----------
-    def utility(self, g, p, context, vmap):
+    def utility(self, g, p, context, vmap, d=None, field=None):
+        """d: path length to g (default Euclidean); field: GeodesicField whose path gives the heading term."""
         gain = self.gain(g, vmap)                           # what would be seen from g
-        d = np.linalg.norm(g - p)                           # v1: Euclidean (v2: Dijkstra)
+        d = np.linalg.norm(g - p) if d is None else d
         u = gain * np.exp(-self.lam * d)
-        # U-turn penalty: favours goals along the motion / the heading
+        # U-turn penalty: favours goals along the motion / the heading (direction of the path's first metres)
         v = np.asarray(context["velocity"], float)
         fwd = unit(v) if np.linalg.norm(v) > 0.3 else np.array([np.cos(context["yaw"]), np.sin(context["yaw"]), 0.])
-        cos_a = float(np.dot(unit(g - p), fwd))             # 1 = ahead, -1 = behind
+        look = context.get("heading_look_m", 12.)
+        to_g = field.first_direction(g, look) if field is not None else unit(g - p)
+        cos_a = float(np.dot(to_g, fwd))                    # 1 = ahead, -1 = behind
         return u * (1 - self.heading_w * (1 - cos_a) / 2)
 
     # ---------- information gain by ray casting ----------

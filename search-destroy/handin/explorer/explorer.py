@@ -6,7 +6,10 @@
         -> goal selection:  target bbox seen?  -> go to the target estimate
                             stuck exploring?   -> graded escape: re-plan / yaw scan / climb (progress.py)
                             otherwise          -> nearest frontier (FrontierPolicy, RL later)
-        -> guidance:  use_mpc  -> safe flight corridor (free voxel boxes along drone -> goal) + MPC (QP)
+           (exploration: frontiers scored by their geodesic distance, geodesic.py)
+        -> guidance:  use_mpc  -> safe flight corridor (free voxel boxes along the path to the goal: geodesic
+                                  path when exploring, straight segment otherwise) + MPC (QP);
+                                  nose aimed ~1 s ahead along the corridor
                       otherwise -> waypoint controller
     -> joystick command (roll, pitch, yaw, throttle)
 """
@@ -22,6 +25,7 @@ from .config import ExplorerConfig
 from .controller import WaypointController
 from .corridor import CorridorPlanner
 from .frontiers import FrontierManager
+from .geodesic import GeodesicField
 from .progress import EscapeManager, column_clear
 from .state_estimation import StateEstimator
 from .target import TargetTracker
@@ -50,6 +54,10 @@ class StepInfo:
     escape_level: str = ""                 # last escape level started: replan | scan | climb
     stuck_reason: str = ""                 # what triggered it: stuck | blocked | clutter
     n_escapes: int = 0
+    path: np.ndarray = None                # polyline the corridor follows (None: straight segment)
+    path_len: float = float("nan")         # length of the geodesic path to the goal (m)
+    geo_ms: float = 0.                     # time of the last geodesic field computation
+    n_unreachable: int = 0                 # frontier candidates without a flyable path (last selection)
     action: np.ndarray = field(default_factory=lambda: np.zeros(4, dtype=np.float32))
 
 
@@ -65,6 +73,8 @@ class FrontierExplorer:
         self.controller = WaypointController(c.control, c.camera, g=c.g)
         self.planner = CorridorPlanner(c.corridor, c.mpc)
         self.escape = EscapeManager(c.escape, dt=c.dt)
+        self.geo = GeodesicField(c.geodesic)
+        self.path_len = float("nan")
         self.info = StepInfo()
         self.frame, self.n_clutter_explore = 0, 0
 
@@ -75,6 +85,8 @@ class FrontierExplorer:
         self.target.reset()
         self.planner.reset()
         self.escape.reset()
+        self.geo = GeodesicField(self.cfg.geodesic)
+        self.path_len = float("nan")
         self.info = StepInfo()
         self.frame, self.n_clutter_explore = 0, 0
 
@@ -96,7 +108,8 @@ class FrontierExplorer:
 
         # 3) target in view? it becomes the goal
         target = self.target.update(obs, depth, cam_pos, cam_R, self.camera)
-        context = {"position": est.p, "yaw": est.yaw, "velocity": est.v, "map": self.map, "target": target}
+        context = {"position": est.p, "yaw": est.yaw, "velocity": est.v, "map": self.map, "target": target,
+                   "geodesic": lambda: self._geodesic(est.p), "heading_look_m": c.geodesic.heading_look_m}
 
         n_clutter, margin = 0, c.corridor.margin_m
         if self.target.active:
@@ -147,7 +160,9 @@ class FrontierExplorer:
         mpc_info = {}
         action = None
         if c.use_mpc:
-            action, mpc_info = self._mpc_action(est, goal, vmax, mode, target, depth, cam, ignore_beyond, margin)
+            path_fn = self._path if mode == "explore" and c.geodesic.enabled else None
+            action, mpc_info = self._mpc_action(est, goal, vmax, mode, target, depth, cam, ignore_beyond, margin,
+                                                path_fn)
         if action is None:
             action = self.controller.compute(est, goal, vmax, depth, cam, ignore_beyond)
 
@@ -156,8 +171,33 @@ class FrontierExplorer:
                              target_estimate=None if target is None else target.copy(),
                              n_frontiers=self.frontiers.n_candidates, coverage=self.map.coverage(),
                              obstacle_ahead=self.controller.obstacle_ahead, action=action,
-                             vmax=vmax, n_clutter=n_clutter, margin=margin, **mpc_info, **self._escape_info())
+                             vmax=vmax, n_clutter=n_clutter, margin=margin, **mpc_info, **self._escape_info(),
+                             **self._geo_info())
         return action
+
+    # ------------------------------------------------------------------ geodesic (exploration only)
+    def _geodesic(self, p):
+        """Geodesic field from p, recomputed only when too old or the drone moved; None if disabled / failed."""
+        gc, g = self.cfg.geodesic, self.geo
+        if not gc.enabled:
+            return None
+        if g.frame is None or self.frame - g.frame > gc.max_age_frames or np.linalg.norm(p - g.p) > gc.max_move_m:
+            g.compute(self.map, p)
+            g.frame = self.frame
+        return g if g.ok else None
+
+    def _path(self, p, goal):
+        """path_fn of the corridor planner: geodesic polyline p -> goal, None (straight segment) if none."""
+        field = self._geodesic(p)
+        path = field.path_to(goal, self.map, p) if field is not None else None
+        self.path_len = float(np.sum(np.linalg.norm(np.diff(path, axis=0), axis=1))) if path is not None \
+            else float("nan")
+        return path
+
+    def _geo_info(self):
+        pol = self.frontiers.policy
+        return {"path": self.planner.path, "path_len": self.path_len,
+                "geo_ms": self.geo.ms, "n_unreachable": getattr(pol, "n_unreachable", 0)}
 
     # ------------------------------------------------------------------ escape (exploration only)
     def _escape_step(self, est):
@@ -208,6 +248,17 @@ class FrontierExplorer:
         a[:2] = c.vel_gain * (v_des[:2] - est.v[:2])
         a[2] = c.alt_kd * (v_des[2] - est.v[2])
         return self.controller.accel_to_sticks(a, est.v, est.yaw, yaw_stick)
+
+    def _look_point(self, est, goal, vmax):
+        """Where the nose points: look_ahead_s (>= look_ahead_min_m) ahead along the current corridor, which
+        bends around the obstacles; the goal itself when there is no corridor for it (first frame, new goal)
+        or when the corridor ends close by (the point would sit right in front of the drone)."""
+        gc, cor = self.cfg.geodesic, self.planner.corridor
+        if cor is None or np.linalg.norm(goal - cor.goal) > self.cfg.corridor.goal_moved_m:
+            return goal
+        dist = max(gc.look_ahead_min_m, gc.look_ahead_s * max(np.linalg.norm(est.v[:2]), vmax))
+        point = cor.point_ahead(est.p, dist)
+        return point if np.linalg.norm(point[:2] - est.p[:2]) > 2. else goal
 
     def _escape_info(self):
         e = self.escape
@@ -308,18 +359,20 @@ class FrontierExplorer:
             a[:2] = e[:2] / dist_h * accel_h
         return self.controller.accel_to_sticks(a, est.v, est.yaw, yaw_stick, tilt_deg=c.tilt_deg)
 
-    def _mpc_action(self, est, goal, vmax, mode, target, depth, cam, ignore_beyond, margin=None):
-        """Corridor + MPC: acceleration from the QP, nose toward the goal, slower while the nose is off it.
+    def _mpc_action(self, est, goal, vmax, mode, target, depth, cam, ignore_beyond, margin=None, path_fn=None):
+        """Corridor + MPC: acceleration from the QP, nose toward a point ~1 s ahead along the corridor (the goal
+        when there is none yet), slower while the nose is off it.
 
         Returns (sticks, info), or (None, {}) when no corridor can be built (falls back to the waypoint controller).
         """
         c = self.cfg
         t0 = time.perf_counter()
-        yaw_stick, yaw_err = self.controller.yaw_stick_toward(est.p, est.yaw, goal)
+        look = self._look_point(est, goal, vmax)
+        yaw_stick, yaw_err = self.controller.yaw_stick_toward(est.p, est.yaw, look)
         speed = vmax * max(0., np.cos(yaw_err)) ** 2                    # fly mostly where the camera has looked
         clear = target if mode == "target" else None                  # the target box itself must be reachable
         a = self.planner.step(self.map, est.p, est.v, goal, speed, vmax, clear, terminal=(mode == "target"),
-                              margin=margin)
+                              margin=margin, path_fn=path_fn)
         if a is None:
             return None, {}
         self.controller.obstacle_ahead = False
