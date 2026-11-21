@@ -63,10 +63,11 @@ class TargetConfig:
 @dataclass
 class ControlConfig:
     cruise_speed_m_s: float = 8.
-    approach_speed_m_s: float = 6.
+    approach_speed_m_s: float = 12.
+    approach_glide_slope: float = 0.15      # descend toward the box over a long, shallow ramp (target_z + slope*dist)
     speed_gain: float = 0.5            # v_des = min(v_max, gain * distance)
     vel_gain: float = 1.5              # 1/s, velocity error -> acceleration
-    max_tilt_deg: float = 35.
+    max_tilt_deg: float = 50.
     max_stick_deg: float = 60.         # full stick = 60 deg (ApproachAviary)
     yaw_gain: float = 0.8              # stick per rad of heading error
     alt_kp: float = 1.2
@@ -74,6 +75,22 @@ class ControlConfig:
     top_speed_m_s: float = 119.5 / 3.6 # TerrainAviary drag model: used as a feed-forward
     top_speed_pitch_deg: float = 60.
     safety_depth_m: float = 5.         # reactive layer: obstacle closer than this in front -> brake + climb
+
+
+@dataclass
+class AttackConfig:
+    """Terminal run: once close to the target estimate and low enough, skip the corridor/MPC and fly a
+    near-max-acceleration straight line at the box (contact at any speed = success)."""
+    engage_dist_m: float = 12.0       # engage the attack below this range to the box estimate
+    engage_max_alt_m: float = 6.0      # only sprint once the approach glide slope has brought us this low
+    settle_dist_m: float = 6.0        # inside this: cut horizontal accel, nose down + slight dive onto the box
+    lost_timeout_s: float = 1.         # require a sighting fresher than this (no sprint on stale memory)
+    accel_m_s2: float = 12.            # horizontal acceleration toward the box (matches the tilt cap)
+    tilt_deg: float = 50.              # mild tilt cap: keeps some margin to correct the aim late
+    box_top_clamp_m: float = 1.5      # never aim below the box top (z ~= 1.55 m): hit the side, not the ground
+    aim_above_box_m: float = 0.2      # aim this far above the box estimate
+    ground_layer_m: float = 2.        # ignore the bottom voxel layer in the path-clear check (it is the ground)
+    clear_voxels_ahead: int = 0        # 0 = none; allow this many non-free voxels on the straight segment
 
 
 @dataclass
@@ -99,11 +116,13 @@ class MPCConfig:
     w_acc: float = 0.02                # acceleration effort
     w_jerk: float = 0.3                # acceleration change (smooth attitude)
     w_term_vel: float = 2.             # terminal velocity -> 0: the plan can always stop inside the corridor
+    w_term_vel_terminal: float = 0.1   # target phase: arrive at the box at speed, not stopped
     w_slack_quad: float = 200.         # soft box constraints
     w_slack_lin: float = 200.
-    a_max_xy_m_s2: float = 6.5         # ~ g tan(35 deg), the controller's tilt limit
-    a_max_z_m_s2: float = 4.
-    v_max_z_m_s: float = 3.
+    a_max_xy_m_s2: float = 12.         # ~ g tan(50 deg), the controller's tilt limit
+    a_max_z_m_s2: float = 6.
+    v_max_z_m_s: float = 5.
+    v_max_z_terminal_m_s: float = 6.   # faster dive onto the box in the target phase
     v_max_margin: float = 1.2          # |v_xy| per axis <= margin * v_max of the current mode
     admm_rho: float = 0.5
     admm_sigma: float = 1e-6
@@ -118,10 +137,16 @@ class ExplorerConfig:
     dt: float = 1. / 30.
     g: float = 9.8
     use_mpc: bool = True               # corridor + MPC guidance; False -> the original waypoint controller
+    use_attack: bool = False          # close-range full-acceleration run at the box when the path is clear (EXPERIMENTAL: still overshoots, see ATTACK_NOTES.md)
     camera: CameraConfig = field(default_factory=CameraConfig)
     map: MapConfig = field(default_factory=MapConfig)
     frontier: FrontierConfig = field(default_factory=FrontierConfig)
     target: TargetConfig = field(default_factory=TargetConfig)
     control: ControlConfig = field(default_factory=ControlConfig)
+    attack: AttackConfig = field(default_factory=AttackConfig)
     corridor: CorridorConfig = field(default_factory=CorridorConfig)
     mpc: MPCConfig = field(default_factory=MPCConfig)
+    # Evaluator flight phases: the mission latches from "exploration" to "terminal" the first time
+    # the policy reports its target mode (see fpv_sim.scripts.evaluate).
+    phase_of_mode: dict = field(default_factory=lambda: {"explore": "exploration", "hover": "exploration",
+                                                         "target": "terminal", "attack": "terminal"})

@@ -20,7 +20,7 @@ from handin.run_explorer import map_rgb
 
 FPV_SIZE = (640, 360)
 MAP_PX = 600
-MODE_COLOURS = {"init": "gray", "explore": "deepskyblue", "target": "orange", "hover": "yellow"}
+MODE_COLOURS = {"init": "gray", "explore": "deepskyblue", "target": "orange", "attack": "red", "hover": "yellow"}
 
 
 class Viewer:

@@ -64,7 +64,7 @@ class WaypointController:
         yaw_err = wrap(des_yaw - yaw)
         return -self.cfg.yaw_gain * yaw_err, yaw_err
 
-    def accel_to_sticks(self, a, v, yaw, yaw_stick):
+    def accel_to_sticks(self, a, v, yaw, yaw_stick, tilt_deg=None):
         """Desired world acceleration (without drag) -> (roll, pitch, yaw, throttle) sticks, drag fed forward."""
         c = self.cfg
         a = np.array(a, dtype=float)
@@ -76,7 +76,7 @@ class WaypointController:
         a_left = -sy * a[0] + cy * a[1]
         a_up = max(self.g + a[2], 0.3 * self.g)
         thrust = np.sqrt(a_fwd ** 2 + a_left ** 2 + a_up ** 2)
-        max_tilt = np.radians(c.max_tilt_deg)
+        max_tilt = np.radians(c.max_tilt_deg if tilt_deg is None else tilt_deg)
         pitch = np.clip(np.arctan2(a_fwd, a_up), -max_tilt, max_tilt)
         roll = np.clip(-np.arcsin(np.clip(a_left / thrust, -1, 1)), -max_tilt, max_tilt)
         throttle = a_up / (np.cos(pitch) * np.cos(roll)) / self.g - 1.

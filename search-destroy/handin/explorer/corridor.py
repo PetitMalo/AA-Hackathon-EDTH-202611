@@ -200,9 +200,13 @@ class CorridorPlanner:
             return True
         return cor.is_blocked(voxel_map, clear_center, c.target_clear_radius_m)
 
-    def step(self, voxel_map, p, v, goal, speed, max_speed, clear_center=None):
-        """Acceleration command (3,), or None when no corridor can be built (drone off the map)."""
+    def step(self, voxel_map, p, v, goal, speed, max_speed, clear_center=None, terminal=False):
+        """Acceleration command (3,), or None when no corridor can be built (drone off the map).
+
+        terminal=True (target phase): the MPC trades the stop-at-horizon cost for arriving at speed.
+        """
         self.age += 1
+        self.mpc.set_terminal(terminal)
         if self._needs_replan(voxel_map, p, goal, clear_center):
             self.corridor = build_corridor(voxel_map, p, goal, self.cfg, clear_center)
             self.age = 0
