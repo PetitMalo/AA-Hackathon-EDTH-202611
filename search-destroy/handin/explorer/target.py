@@ -295,7 +295,7 @@ class TargetPursuit:
         vmax = float(min(self.ctl.approach_speed_m_s,
                          np.sqrt(c.strike_speed_m_s ** 2 + 2. * c.brake_m_s2 * max(d_h - c.strike_dist_m, 0.))))
         look = p + c.look_dist_m * np.array([np.cos(az), np.sin(az), 0.])          # C1
-        self.floor_on = bool(path_clear and not self.reacquire)                    # T1, obstacles first
+        self.floor_on = bool(c.pitch_floor and path_clear and not self.reacquire)   # T1, obstacles first
         pitch_min = self.pitch_floor(delta) if self.floor_on else None             # C4
         return PursuitPlan("target", goal, vmax, look=look, pitch_min=pitch_min)
 
@@ -326,7 +326,8 @@ class TargetPursuit:
         slope = np.arctan2(p[2] - aim[2], max(d_h, 0.5))                         # down to the aim height
         direction = np.array([np.cos(az) * np.cos(slope), np.sin(az) * np.cos(slope), -np.sin(slope)])
         a = c.strike_gain * (c.strike_speed_m_s * direction - v)
-        action = self.controller.accel_to_sticks(a, v, est.yaw, yaw_stick, pitch_min=self.pitch_floor(slope))
+        floor = self.pitch_floor(slope) if c.pitch_floor else None
+        action = self.controller.accel_to_sticks(a, v, est.yaw, yaw_stick, pitch_min=floor)
         return PursuitPlan("strike", aim, c.strike_speed_m_s, action=action)
 
     def _brake(self, est, az):

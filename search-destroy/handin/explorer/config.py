@@ -86,6 +86,8 @@ class PursuitConfig:
     los_deg: float = 10.               # line of sight: altitude = box_z + d_h tan(los): 18 m at 100 m, 4.3 m at 20 m
     los_gain: float = 0.5              # C3: goal altitude correction from the sight angle measured in the image
     min_height_m: float = 0.5          # goal never lower than this above the box centre
+    pitch_floor: bool = False          # C4 pitch floor (target + strike). OFF: it forced the nose down, the MPC
+                                       # could not brake, the drone reached the box at 10-15 m/s and overshot it
     view_margin_deg: float = 5.        # C4: keep the box this far above the bottom edge of the image
     look_dist_m: float = 10.           # C1: nose aimed at a point this far along the box azimuth
     strike_speed_m_s: float = 8.       # contact speed (the drag + C4 floor at 10 deg settle there)
