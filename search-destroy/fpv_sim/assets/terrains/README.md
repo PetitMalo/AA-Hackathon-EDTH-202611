@@ -52,3 +52,54 @@ with its context and visibility.
 [`tools/generate_assets.py`](../../../tools/generate_assets.py) regenerates the
 scenes, poses, and previews from fixed seeds. `village@v1` is the default for
 `ApproachAviary` and the RC script.
+
+## Attack maps
+
+The `level_*` terrains train the attack phase, once the target has been located.
+Each file uses a `setups` list instead of `targets`: every setup pairs a ground
+target pose (`target`, as above) with a drone `start` pose (`position_m`,
+`rpy_rad`), chosen so the target begins inside the onboard camera's FOV at a
+fixed range. `load_terrain` places the box at `setups[v-1].target`, and
+`terrain_start_pose("<name>@v<N>")` returns the matching start; `ApproachAviary`
+reads it when no explicit `start_pose` is passed.
+
+`level_1` is an empty 500 × 500 m map (only the ground surface). Sixty setups,
+ten per distance, the distance doubling from 5 m to 160 m:
+
+| Versions | Distance |
+| --- | ---: |
+| v1–v10 | 5 m |
+| v11–v20 | 10 m |
+| v21–v30 | 20 m |
+| v31–v40 | 40 m |
+| v41–v50 | 80 m |
+| v51–v60 | 160 m |
+
+Each setup randomises the target's position and orientation in the tile and the
+drone's azimuth and height (2–30 m, capped per distance so the target stays in
+the 70° VFOV within the 60° pitch limit), and a start attitude that keeps the
+target inside the 102° HFOV. Regenerate with
+`uv run python tools/generate_assets.py --level-1`; `previews/level_1.png`
+shows every drone–target pair from above, and `level_1_targets.png` a thumbnail
+per setup.
+
+`level_2` keeps `level_1`'s FOV invariants and distance buckets, but overlays
+them on the `forest` scene: the 377 forest props (pines, broadleaves, bushes,
+rocks, a hut) are kept verbatim, so small obstacles stand between the drone and
+the target. Each setup is rejection-sampled on the forest world so that the box
+touches no solid prop (bushes excepted), the drone (a 0.6 m probe) clears every
+solid prop at its start pose, and a ray from the camera eye to the box centre
+hits the box first — clean line of sight at reset, matching `level_1`'s
+invariant. Regenerate with `uv run python tools/generate_assets.py --level-2`;
+note that regenerating `forest` (the default `tools/generate_assets.py` run)
+changes the obstacles, so `level_2` should be regenerated at the same time.
+
+`level_3` is `level_2` applied to the `city` scene: the 345 city props
+(buildings, cars, electric poles, trees, bushes, a shed) are kept verbatim, so
+the attack setups thread through a street grid instead of a forest. The same
+three sampling invariants hold — box clear of solid props (bushes excepted),
+0.6 m drone probe clear at the start pose, and a clean centre-ray line of sight
+— over the same 60 setups / 5/10/20/40/80/160 m buckets. Regenerate with
+`uv run python tools/generate_assets.py --level-3`; as with `level_2`,
+regenerating `city` changes the obstacles, so regenerate `level_3` at the same
+time.

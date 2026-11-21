@@ -14,9 +14,10 @@ import numpy as np
 import pybullet as p
 from mcap.writer import Writer
 
-from fpv_sim.utils.terrain import TERRAINS_DIR
+from fpv_sim.utils.terrain import TERRAINS_DIR, terrain_start_pose
 
 TERRAINS = ("field", "forest", "village", "city")
+ATTACK_TERRAINS = ("level_1", "level_2", "level_3")
 FPS = 30
 BUDGET_MS = 1000 / FPS
 ARENA = 350    # |x| or |y| beyond this leaves the arena
@@ -26,9 +27,43 @@ RAW_IMAGE = {"title": "foxglove.RawImage", "type": "object", "properties": {
     "encoding": {"type": "string"}, "step": {"type": "integer"},
     "data": {"type": "string", "contentEncoding": "base64"}}}
 
+# Cheap per-step analysis topics (JSON): no extra rendering, no physics raycasts.
+TARGET_RELATIVE_SCHEMA = {"title": "TargetRelative", "type": "object", "properties": {
+    "distance_m": {"type": "number"}, "bearing_deg": {"type": "number"},
+    "elevation_deg": {"type": "number"}, "lateral_offset_m": {"type": "number"},
+    "vertical_offset_m": {"type": "number"}}}
+MISSION_PHASE_SCHEMA = {"title": "MissionPhase", "type": "object", "properties": {
+    "event": {"type": "string"}, "phase": {"type": "string"}, "from": {"type": "string"},
+    "to": {"type": "string"}, "phase_time_s": {"type": "number"}}}
+
 
 def versions(terrain):
-    return len(json.loads((TERRAINS_DIR / f"{terrain}.json").read_text())["targets"])
+    spec = json.loads((TERRAINS_DIR / f"{terrain}.json").read_text())
+    return len(spec["setups"] if "setups" in spec else spec["targets"])
+
+
+def target_center(env):
+    """World position of the single collision box the target body holds."""
+    body = env.TERRAIN_IDS[0]
+    center, quat = p.getBasePositionAndOrientation(body, physicsClientId=env.CLIENT)
+    shape = p.getCollisionShapeData(body, -1, physicsClientId=env.CLIENT)[0]
+    local_pos, yaw = shape[5], p.getEulerFromQuaternion(quat)[2]
+    c, s = np.cos(yaw), np.sin(yaw)
+    offset = np.array([c * local_pos[0] - s * local_pos[1], s * local_pos[0] + c * local_pos[1], local_pos[2]])
+    return np.array(center, dtype=float) + offset
+
+
+def target_relative(drone_xyz, drone_yaw, box_xyz):
+    """Target position in the drone frame: range, bearing (left +), elevation (up +), lateral, vertical."""
+    rel = np.asarray(box_xyz, dtype=float) - np.asarray(drone_xyz, dtype=float)
+    c, s = np.cos(-drone_yaw), np.sin(-drone_yaw)
+    fwd, lat = c * rel[0] - s * rel[1], s * rel[0] + c * rel[1]
+    horiz = np.hypot(fwd, lat)
+    return {"distance_m": float(np.linalg.norm(rel)),
+            "bearing_deg": float(np.degrees(np.arctan2(lat, fwd))),
+            "elevation_deg": float(np.degrees(np.arctan2(rel[2], horiz))),
+            "lateral_offset_m": float(lat),
+            "vertical_offset_m": float(rel[2])}
 
 
 def random_start(env, rng):
@@ -48,6 +83,22 @@ def random_start(env, rng):
     env.vio.reset(env._getDroneStateVector(0))
     env.imu.reset()
     return env._sense(), {"position_m": xyz.tolist(), "yaw_rad": float(yaw), "speed_m_s": float(speed)}
+
+
+def mission_start(env, rng, terrain):
+    """Start of a flight: the `level_*` setup pose when the terrain pins one, else a random search start.
+
+    For attack maps (`level_*`), the drone starts at the setup's `start` pose with the target already in
+    the camera's sight (ApproachAviary reads it at construction); each flight differs only in sensing
+    noise. For the search scenes, falls back to `random_start` (a clear start 225-275 m from the centre).
+    """
+    pose = terrain_start_pose(terrain)
+    if pose is None:
+        return random_start(env, rng)
+    obs, _ = env.reset(seed=int(rng.integers(2 ** 31)))
+    env.vio.reset(env._getDroneStateVector(0))
+    env.imu.reset()
+    return obs, {"position_m": list(pose["position_m"]), "yaw_rad": float(pose["rpy_rad"][2]), "speed_m_s": 0.}
 
 
 class Log:
@@ -92,16 +143,23 @@ def log_sensors(log, env, obs, t, step, depth_every):
     return state, info
 
 
-def fly(env, agent, rng, path, timeout_s=120., depth_every=10):
+def fly(env, agent, rng, path, timeout_s=120., depth_every=10, terrain=None):
     """Flies one run with the agent in full command; returns its summary."""
-    obs, start = random_start(env, rng)
+    obs, start = mission_start(env, rng, terrain if terrain is not None else getattr(env, "TERRAIN", None))
     agent.reset()
     log = Log(path)
     record = {"outcome": "timeout", "error": "", **{f"start_{k}": v for k, v in start.items()},
               "start_distance_m": env._distance()}
+    box_xyz = target_center(env)
     latencies, speeds, seen_at, path_m = [], [], None, 0.
+    # Flight phase mirrors the policy's own mode (Agent exposes "exploration" | "terminal"); there
+    # is no separate distance threshold in the evaluator. The mission split latches on the FIRST
+    # time the policy commits to the target: one exploration phase, then one terminal phase.
+    phase, phase_start_t, stance = "exploration", 0., {"exploration": 0., "terminal": 0.}
+    policy_phase, committed = "exploration", False
     t, step = 0., 0
     state, info = log_sensors(log, env, obs, t, step, depth_every)
+    log.write("/mission/phase", t, {"event": "enter", "phase": phase, "phase_time_s": 0.}, MISSION_PHASE_SCHEMA)
     try:
         while True:
             if obs["detected"] and seen_at is None:
@@ -109,6 +167,21 @@ def fly(env, agent, rng, path, timeout_s=120., depth_every=10):
             tic = time.perf_counter()
             action = np.asarray(agent.act(obs), dtype=float)
             latencies.append(1000 * (time.perf_counter() - tic))
+            # Policy mode transition (debugging): log every change; the mission split below latches
+            # on the first commit to terminal only.
+            new_policy_phase = obs.get("phase")
+            if new_policy_phase is not None and new_policy_phase != policy_phase:
+                log.write("/mission/phase", t, {"event": "policy_transition", "from": policy_phase,
+                                                "to": new_policy_phase, "phase_time_s": t - phase_start_t},
+                          MISSION_PHASE_SCHEMA)
+                if not committed and new_policy_phase == "terminal":
+                    committed = True
+                    stance["exploration"] += t - phase_start_t
+                    log.write("/mission/phase", t, {"event": "transition", "from": "exploration",
+                                                    "to": "terminal", "phase_time_s": t - phase_start_t},
+                              MISSION_PHASE_SCHEMA)
+                    phase, phase_start_t = "terminal", t
+                policy_phase = new_policy_phase
             log.write("/agent/action", t, {**dict(zip(("roll", "pitch", "yaw", "throttle"), action.tolist())),
                                            "latency_ms": latencies[-1]})
             prev = state[0:3]
@@ -117,6 +190,8 @@ def fly(env, agent, rng, path, timeout_s=120., depth_every=10):
             t = env.step_counter / env.PYB_FREQ
             state, info = log_sensors(log, env, obs, t, step, depth_every)
             path_m += np.linalg.norm(state[0:3] - prev)
+            log.write("/analysis/target_relative", t,
+                      target_relative(state[0:3], state[9], box_xyz), TARGET_RELATIVE_SCHEMA)
             speeds.append(np.linalg.norm(state[10:13]))
             if info["is_success"]:
                 record["outcome"] = "success"
@@ -128,8 +203,12 @@ def fly(env, agent, rng, path, timeout_s=120., depth_every=10):
                 break
     except Exception as exc:    # a bad action or a crashing agent fails this flight, not the whole evaluation
         record.update(outcome="error", error=repr(exc))
+    stance[phase] += t - phase_start_t
+    log.write("/mission/phase", t, {"event": "final", "phase": phase, "phase_time_s": t - phase_start_t},
+              MISSION_PHASE_SCHEMA)
     lat = np.array(latencies or [np.nan])
     record.update(time_s=t, steps=step, path_m=path_m, mean_speed_m_s=path_m / t if t else 0.,
+                  exploration_time_s=stance["exploration"], terminal_time_s=stance["terminal"],
                   max_speed_m_s=max(speeds, default=0.), final_speed_m_s=float(np.linalg.norm(state[10:13])),
                   final_distance_m=info["distance_m"], seen=seen_at is not None,
                   first_detection_s=seen_at if seen_at is not None else "",
@@ -151,7 +230,7 @@ def run_target(job):
         for run in range(runs):
             run_seed = [seed, sum(map(ord, terrain)), run]
             rng = np.random.default_rng(run_seed)
-            record = fly(env, agent, rng, out / terrain / f"run{run:02d}.mcap", timeout_s, depth_every)
+            record = fly(env, agent, rng, out / terrain / f"run{run:02d}.mcap", timeout_s, depth_every, terrain)
             records.append({"terrain": terrain, "run": run, **record})
     finally:
         env.close()
@@ -171,6 +250,8 @@ def summarize(records):
             "flights": len(rs),
             **{f"{o}_rate": mean([r["outcome"] == o for r in rs])
                for o in ("success", "collision", "timeout", "out_of_arena", "error")},
+            "exploration_time_s": mean([r["exploration_time_s"] for r in rs]),
+            "terminal_time_s": mean([r["terminal_time_s"] for r in rs]),
             "reach_time_s": mean([r["time_s"] for r in ok]),
             "reach_mean_speed_m_s": mean([r["mean_speed_m_s"] for r in ok]),
             "path_efficiency": mean([r["start_distance_m"] / r["path_m"]
@@ -187,7 +268,7 @@ def summarize(records):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--runs", type=int, default=10, help="flights per target box")
-    parser.add_argument("--terrains", nargs="+", default=TERRAINS, choices=TERRAINS)
+    parser.add_argument("--terrains", nargs="+", default=TERRAINS, choices=TERRAINS + ATTACK_TERRAINS)
     parser.add_argument("--timeout", type=float, default=120., help="seconds of simulated flight")
     parser.add_argument("--depth-every", type=int, default=10, help="log 1 depth map in N frames (1 = all, ~130 MB a flight)")
     parser.add_argument("--workers", type=int, default=os.cpu_count())
@@ -213,10 +294,11 @@ def main(argv=None):
     (args.out / "metrics.json").write_text(json.dumps(metrics, indent=1))
 
     print(f"\n{'terrain':8} {'flights':>7} {'reach':>6} {'crash':>6} {'t/o':>5} {'out':>5} {'err':>5} "
-          f"{'t_reach_s':>9} {'v_reach_m/s':>11} {'seen':>5} {'lat_ms':>7} {'fps':>6}")
+          f"{'t_expl_s':>9} {'t_term_s':>9} {'t_reach_s':>9} {'v_reach_m/s':>11} {'seen':>5} {'lat_ms':>7} {'fps':>6}")
     for name, m in metrics.items():
         print(f"{name:8} {m['flights']:7d} {m['success_rate']:6.0%} {m['collision_rate']:6.0%} {m['timeout_rate']:5.0%} "
-              f"{m['out_of_arena_rate']:5.0%} {m['error_rate']:5.0%} {m['reach_time_s']:9.1f} {m['reach_mean_speed_m_s']:11.1f} "
+              f"{m['out_of_arena_rate']:5.0%} {m['error_rate']:5.0%} {m['exploration_time_s']:9.1f} {m['terminal_time_s']:9.1f} "
+              f"{m['reach_time_s']:9.1f} {m['reach_mean_speed_m_s']:11.1f} "
               f"{m['detection_rate']:5.0%} {m['latency_mean_ms']:7.2f} {m['agent_fps']:6.0f}")
         if m["latency_mean_ms"] > BUDGET_MS:
             print(f"  WARNING: {name} agent averages {m['latency_mean_ms']:.1f} ms a step, below {FPS} FPS")

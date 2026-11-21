@@ -8,17 +8,38 @@ from gym_pybullet_drones.utils.enums import DroneModel, Physics
 from fpv_sim.control.angle_control import AngleControl
 from fpv_sim.envs.terrain_aviary import TerrainAviary
 from fpv_sim.utils.perception import Camera, Detector, DepthModel, IMU, VIO
+from fpv_sim.utils.terrain import terrain_start_pose
 
 
 class ApproachAviary(TerrainAviary):
     """30 Hz sensor and RC-stick interface"""
 
-    def __init__(self, continuous=False, terrain="village@v1"):
+    def __init__(self, continuous=False, terrain="village@v1", start_pose=None):
+        """Initialization of an approach aviary.
+
+        Parameters
+        ----------
+        continuous : bool, optional
+            Whether the episode continues after contact, instead of terminating.
+        terrain : str, optional
+            A versioned terrain, "<name>@v<N>" from `fpv_sim/assets/terrains`.
+        start_pose : dict, optional
+            An explicit drone start pose (`position_m`, `rpy_rad`); when None and the terrain is an
+            attack `level_*` map, it is read from the setup, so the target starts in the camera's sight.
+            Otherwise the drone starts at (0, 0, 3) level, as in the classic search scenes.
+
+        """
         self.seen = False
         self.continuous = continuous
+        pose = start_pose if start_pose is not None else terrain_start_pose(terrain)
+        if pose is not None:
+            initial_xyzs = np.atleast_2d(np.asarray(pose['position_m'], dtype=float))
+            initial_rpys = np.atleast_2d(np.asarray(pose['rpy_rad'], dtype=float))
+        else:
+            initial_xyzs, initial_rpys = np.array([[0., 0., 3.]]), np.zeros((1, 3))
         super().__init__(drone_model=DroneModel.RACE, physics=Physics.PYB,
                          pyb_freq=240, ctrl_freq=240, terrain=terrain, gui=False,
-                         user_debug_gui=False, initial_xyzs=np.array([[0., 0., 3.]]))
+                         user_debug_gui=False, initial_xyzs=initial_xyzs, initial_rpys=initial_rpys)
         self.ctrl = AngleControl(drone_model=DroneModel.RACE)
         self.camera = Camera(self.CLIENT, width=160, height=90)
         self.detector = Detector()
