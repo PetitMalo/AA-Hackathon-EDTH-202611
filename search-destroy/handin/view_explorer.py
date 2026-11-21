@@ -13,7 +13,7 @@ import pybullet as p
 import pygame
 
 from fpv_sim.envs.approach_aviary import ApproachAviary
-from fpv_sim.scripts.evaluate import random_start
+from fpv_sim.scripts.evaluate import mission_start
 from fpv_sim.utils.perception import Camera, draw_box
 from handin.agent import Agent
 from handin.run_explorer import map_rgb
@@ -36,8 +36,7 @@ class Viewer:
         self.new_flight()
 
     def new_flight(self):
-        self.env.reset(seed=self.seed)
-        self.obs, _ = random_start(self.env, np.random.default_rng(self.seed))
+        self.obs, _ = mission_start(self.env, np.random.default_rng(self.seed), self.terrain)
         self.agent.reset()
         self.step, self.outcome = 0, None
         self.true_track, self.est_track = [], []
