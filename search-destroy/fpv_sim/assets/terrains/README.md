@@ -52,3 +52,33 @@ with its context and visibility.
 [`tools/generate_assets.py`](../../../tools/generate_assets.py) regenerates the
 scenes, poses, and previews from fixed seeds. `village@v1` is the default for
 `ApproachAviary` and the RC script.
+
+## Attack maps
+
+The `level_*` terrains train the attack phase, once the target has been located.
+Each file uses a `setups` list instead of `targets`: every setup pairs a ground
+target pose (`target`, as above) with a drone `start` pose (`position_m`,
+`rpy_rad`), chosen so the target begins inside the onboard camera's FOV at a
+fixed range. `load_terrain` places the box at `setups[v-1].target`, and
+`terrain_start_pose("<name>@v<N>")` returns the matching start; `ApproachAviary`
+reads it when no explicit `start_pose` is passed.
+
+`level_1` is an empty 500 × 500 m map (only the ground surface). Sixty setups,
+ten per distance, the distance doubling from 5 m to 160 m:
+
+| Versions | Distance |
+| --- | ---: |
+| v1–v10 | 5 m |
+| v11–v20 | 10 m |
+| v21–v30 | 20 m |
+| v31–v40 | 40 m |
+| v41–v50 | 80 m |
+| v51–v60 | 160 m |
+
+Each setup randomises the target's position and orientation in the tile and the
+drone's azimuth and height (2–30 m, capped per distance so the target stays in
+the 70° VFOV within the 60° pitch limit), and a start attitude that keeps the
+target inside the 102° HFOV. Regenerate with
+`uv run python tools/generate_assets.py --level-1`; `previews/level_1.png`
+shows every drone–target pair from above, and `level_1_targets.png` a thumbnail
+per setup.
