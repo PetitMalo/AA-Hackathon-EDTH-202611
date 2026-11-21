@@ -38,6 +38,19 @@ class FrontierConfig:
     reach_dist_m: float = 5.           # goal considered reached
     commit_s: float = 8.               # max time spent on one frontier before re-planning
     center_weight: float = 0.5         # cost = d(drone) + center_weight * d(centre); 0 -> pure nearest
+    policy: str = "gain_cost"          # "gain_cost" (GainCostFrontierPolicy) | "nearest" (NearestFrontierPolicy)
+    blacklist_s: float = 30.           # a goal abandoned on commit timeout is excluded this long...
+    blacklist_radius_m: float = 10.    # ... with every frontier this close to it
+    # GainCostFrontierPolicy
+    cluster_m: float = 10.             # frontier binning cell (several voxels per cell)
+    min_cluster: int = 5               # frontier points per cluster (no crumbs)
+    max_candidates: int = 40           # clusters ray-cast, pre-selected by size * exp(-lam d)
+    n_rays: int = 128                  # rays per viewpoint (Fibonacci sphere)
+    gain_range_m: float = 15.          # ray length for the information gain
+    lam: float = 0.08                  # 1/m, distance discount exp(-lam d)
+    heading_w: float = 0.5             # U-turn penalty (0 = off)
+    hysteresis: float = 0.25           # switch goal only if the new one is 25 % better
+    prior_sigma_m: float = 100.        # Gaussian prior on the target around the arena centre
 
 
 @dataclass
