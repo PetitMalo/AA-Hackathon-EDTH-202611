@@ -63,8 +63,19 @@ class TargetConfig:
 @dataclass
 class ControlConfig:
     cruise_speed_m_s: float = 8.
-    approach_speed_m_s: float = 12.
+    approach_speed_m_s: float = 12.         # target phase, far from the box
     approach_glide_slope: float = 0.15      # descend toward the box over a long, shallow ramp (target_z + slope*dist)
+    # Terminal approach: the speed cap follows a braking profile down to the terminal speed at
+    # terminal_radius_m from the box estimate: v = sqrt(v_term^2 + 2 * brake * (d - terminal_radius)).
+    terminal_radius_m: float = 15.
+    terminal_brake_m_s2: float = 4.
+    terminal_speed_m_s: float = 5.          # clear surroundings
+    terminal_speed_min_m_s: float = 3.      # cluttered surroundings
+    clutter_radius_m: float = 4.            # obstacles (connected groups of occupied voxels) counted this close to the drone
+    clutter_free_count: int = 2             # up to this many obstacles: terminal_speed_m_s
+    clutter_max_count: int = 4              # this many or more: terminal_speed_min_m_s (linear in between)
+    clutter_ground_m: float = 2.            # voxels below this height are the ground, not obstacles
+    clutter_box_clear_m: float = 3.         # voxels this close to the box estimate are the box itself, not obstacles
     speed_gain: float = 0.5            # v_des = min(v_max, gain * distance)
     vel_gain: float = 1.5              # 1/s, velocity error -> acceleration
     max_tilt_deg: float = 50.
@@ -102,7 +113,9 @@ class CorridorConfig:
     max_boxes: int = 6
     max_length_m: float = 60.          # the path is truncated to this length
     max_box_size_m: float = 30.        # per axis
-    margin_m: float = 0.35              # boxes shrunk by this for the MPC (no obstacle inflation for now)
+    margin_m: float = 0.8               # boxes shrunk by this for the MPC, away from the target (and when exploring)
+    margin_near_m: float = 0.2          # ... and by this once the drone is within near_target_radius_m of the box
+    near_target_radius_m: float = 5.
     target_clear_radius_m: float = 4.  # voxels this close to the target estimate count as free (contact = success)
     z_min_m: float = 1.                # altitude floor in the MPC
     reactive_safety: bool = False      # also run the old depth-image brake-and-climb layer on top of the MPC

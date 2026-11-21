@@ -200,10 +200,12 @@ class CorridorPlanner:
             return True
         return cor.is_blocked(voxel_map, clear_center, c.target_clear_radius_m)
 
-    def step(self, voxel_map, p, v, goal, speed, max_speed, clear_center=None, terminal=False):
+    def step(self, voxel_map, p, v, goal, speed, max_speed, clear_center=None, terminal=False, margin=None):
         """Acceleration command (3,), or None when no corridor can be built (drone off the map).
 
         terminal=True (target phase): the MPC trades the stop-at-horizon cost for arriving at speed.
+        margin: how much the corridor boxes are shrunk for the MPC (default cfg.margin_m); applied at
+        every step, so a change takes effect without re-planning the corridor.
         """
         self.age += 1
         self.mpc.set_terminal(terminal)
@@ -215,7 +217,10 @@ class CorridorPlanner:
             return None
         m = self.mpc_cfg
         refs, box = self.corridor.reference(p, speed, m.horizon, m.dt)
-        lo, hi = self.corridor.lo_mpc[box].copy(), self.corridor.hi_mpc[box]
+        margin = self.cfg.margin_m if margin is None else margin
+        box_lo, box_hi = self.corridor.lo[box], self.corridor.hi[box]
+        mid = (box_lo + box_hi) / 2
+        lo, hi = np.minimum(box_lo + margin, mid), np.maximum(box_hi - margin, mid)
         lo[:, 2] = np.maximum(lo[:, 2], self.cfg.z_min_m)
         self.refs = refs
         return self.mpc.solve(p, v, refs, lo, np.maximum(hi, lo), max_speed)

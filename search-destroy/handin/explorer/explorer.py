@@ -14,6 +14,7 @@ import time
 from dataclasses import dataclass, field
 
 import numpy as np
+from scipy import ndimage
 
 from .camera_model import CameraModel
 from .config import ExplorerConfig
@@ -40,6 +41,9 @@ class StepInfo:
     corridor_blocked: bool = False
     mpc_ms: float = 0.
     mpc_iters: int = 0
+    vmax: float = 0.                       # speed cap of the current mode
+    n_clutter: int = 0                     # obstacles near the drone (target phase only)
+    margin: float = 0.                     # corridor margin given to the MPC
     action: np.ndarray = field(default_factory=lambda: np.zeros(4, dtype=np.float32))
 
 
@@ -83,12 +87,17 @@ class FrontierExplorer:
         target = self.target.update(obs, depth, cam_pos, cam_R, self.camera)
         context = {"position": est.p, "yaw": est.yaw, "velocity": est.v, "map": self.map, "target": target}
 
+        n_clutter, margin = 0, c.corridor.margin_m
         if self.target.active:
-            mode, goal, vmax = "target", target.copy(), c.control.approach_speed_m_s
+            mode, goal = "target", target.copy()
             # glide slope: come down toward the box over a long shallow ramp, never climb for it
             dist_h = np.linalg.norm(goal[:2] - est.p[:2])
             goal[2] = min(est.p[2], goal[2] + c.control.approach_glide_slope * dist_h)
             dist = np.linalg.norm(target - est.p)
+            n_clutter = self._count_obstacles_near(est.p, target)
+            vmax = self._approach_speed(dist, n_clutter)
+            if dist < c.corridor.near_target_radius_m:
+                margin = c.corridor.margin_near_m
             ignore_beyond = max(np.linalg.norm(target - cam_pos) - 3., 0.)
             if c.use_attack and dist < c.attack.engage_dist_m:
                 attack = self._attack_action(est, target, dist, depth)
@@ -116,7 +125,7 @@ class FrontierExplorer:
         mpc_info = {}
         action = None
         if c.use_mpc:
-            action, mpc_info = self._mpc_action(est, goal, vmax, mode, target, depth, cam, ignore_beyond)
+            action, mpc_info = self._mpc_action(est, goal, vmax, mode, target, depth, cam, ignore_beyond, margin)
         if action is None:
             action = self.controller.compute(est, goal, vmax, depth, cam, ignore_beyond)
 
@@ -124,8 +133,39 @@ class FrontierExplorer:
         self.info = StepInfo(mode=mode, goal=goal, position=est.p.copy(), yaw=est.yaw,
                              target_estimate=None if target is None else target.copy(),
                              n_frontiers=self.frontiers.n_candidates, coverage=self.map.coverage(),
-                             obstacle_ahead=self.controller.obstacle_ahead, action=action, **mpc_info)
+                             obstacle_ahead=self.controller.obstacle_ahead, action=action,
+                             vmax=vmax, n_clutter=n_clutter, margin=margin, **mpc_info)
         return action
+
+    def _approach_speed(self, dist, n_clutter):
+        """Target-phase speed cap: terminal speed (5 m/s clear, down to 3 m/s in clutter) at
+        terminal_radius_m from the box, reached through a constant-deceleration profile from the far speed."""
+        c = self.cfg.control
+        k = np.clip((n_clutter - c.clutter_free_count) / max(c.clutter_max_count - c.clutter_free_count, 1), 0., 1.)
+        v_term = c.terminal_speed_m_s + k * (c.terminal_speed_min_m_s - c.terminal_speed_m_s)
+        v_brake = np.sqrt(v_term ** 2 + 2. * c.terminal_brake_m_s2 * max(dist - c.terminal_radius_m, 0.))
+        return float(min(c.approach_speed_m_s, v_brake))
+
+    def _count_obstacles_near(self, p, target):
+        """Number of separate obstacles (26-connected groups of occupied voxels) within clutter_radius_m
+        of the drone, leaving out the ground layer and the box itself."""
+        c, m = self.cfg.control, self.map
+        r = c.clutter_radius_m
+        lo = np.clip(np.floor((p - r - m.origin) / m.res).astype(int), 0, m.shape)
+        hi = np.clip(np.floor((p + r - m.origin) / m.res).astype(int) + 1, 0, m.shape)
+        if np.any(hi <= lo):
+            return 0
+        sl = tuple(slice(a, b) for a, b in zip(lo, hi))
+        occ = m.observed[sl] & (m.logodds[sl] > 0)
+        centres = [m.origin[i] + (np.arange(lo[i], hi[i]) + .5) * m.res for i in range(3)]
+        cx, cy, cz = np.meshgrid(*centres, indexing="ij")
+        pts = np.stack([cx, cy, cz], axis=-1)
+        occ &= np.linalg.norm(pts - p, axis=-1) <= r
+        occ &= cz >= c.clutter_ground_m
+        occ &= np.linalg.norm(pts - target, axis=-1) > c.clutter_box_clear_m
+        if not occ.any():
+            return 0
+        return int(ndimage.label(occ, structure=np.ones((3, 3, 3)))[1])
 
     def _publish_phase(self, obs, mode):
         """Tell the evaluator our mission phase (it latches 'terminal' on the first target commit)."""
@@ -188,7 +228,7 @@ class FrontierExplorer:
             a[:2] = e[:2] / dist_h * accel_h
         return self.controller.accel_to_sticks(a, est.v, est.yaw, yaw_stick, tilt_deg=c.tilt_deg)
 
-    def _mpc_action(self, est, goal, vmax, mode, target, depth, cam, ignore_beyond):
+    def _mpc_action(self, est, goal, vmax, mode, target, depth, cam, ignore_beyond, margin=None):
         """Corridor + MPC: acceleration from the QP, nose toward the goal, slower while the nose is off it.
 
         Returns (sticks, info), or (None, {}) when no corridor can be built (falls back to the waypoint controller).
@@ -198,7 +238,8 @@ class FrontierExplorer:
         yaw_stick, yaw_err = self.controller.yaw_stick_toward(est.p, est.yaw, goal)
         speed = vmax * max(0., np.cos(yaw_err)) ** 2                    # fly mostly where the camera has looked
         clear = target if mode == "target" else None                  # the target box itself must be reachable
-        a = self.planner.step(self.map, est.p, est.v, goal, speed, vmax, clear, terminal=(mode == "target"))
+        a = self.planner.step(self.map, est.p, est.v, goal, speed, vmax, clear, terminal=(mode == "target"),
+                              margin=margin)
         if a is None:
             return None, {}
         self.controller.obstacle_ahead = False
