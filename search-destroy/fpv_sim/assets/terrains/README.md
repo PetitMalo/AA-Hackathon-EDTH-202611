@@ -93,3 +93,13 @@ hits the box first — clean line of sight at reset, matching `level_1`'s
 invariant. Regenerate with `uv run python tools/generate_assets.py --level-2`;
 note that regenerating `forest` (the default `tools/generate_assets.py` run)
 changes the obstacles, so `level_2` should be regenerated at the same time.
+
+`level_3` is `level_2` applied to the `city` scene: the 345 city props
+(buildings, cars, electric poles, trees, bushes, a shed) are kept verbatim, so
+the attack setups thread through a street grid instead of a forest. The same
+three sampling invariants hold — box clear of solid props (bushes excepted),
+0.6 m drone probe clear at the start pose, and a clean centre-ray line of sight
+— over the same 60 setups / 5/10/20/40/80/160 m buckets. Regenerate with
+`uv run python tools/generate_assets.py --level-3`; as with `level_2`,
+regenerating `city` changes the obstacles, so regenerate `level_3` at the same
+time.

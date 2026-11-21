@@ -17,7 +17,7 @@ from mcap.writer import Writer
 from fpv_sim.utils.terrain import TERRAINS_DIR, terrain_start_pose
 
 TERRAINS = ("field", "forest", "village", "city")
-ATTACK_TERRAINS = ("level_1", "level_2")
+ATTACK_TERRAINS = ("level_1", "level_2", "level_3")
 FPS = 30
 BUDGET_MS = 1000 / FPS
 ARENA = 350    # |x| or |y| beyond this leaves the arena

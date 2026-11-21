@@ -1196,6 +1196,168 @@ def level_2_previews(spec):
         sheet.paste(t, (thumb * ((i - 1) % cols), thumb * ((i - 1) // cols)))
     sheet.save(PRE / 'level_2_targets.png')
 
+LEVEL_3_CITY = 'city'
+LEVEL_3_DRONE_RADIUS = LEVEL_2_DRONE_RADIUS
+LEVEL_3_MAX_ATTEMPTS = 60000          # per distance bucket; the city is dense but the box is small
+LEVEL_3_SEED = 301
+
+def build_level_3(seed=LEVEL_3_SEED):
+    """Returns the level_3 terrain spec (name, setups, objects), seeded and reproducible.
+
+    Same as level_2 but overlaying level_1's 60 attack setups on the city scene
+    instead of the forest scene. The objects are the city scene's, copied verbatim.
+    Each setup is sampled by level_1's geometry rules then accepted only if the box
+    is clear of solid props (bushes excepted), the drone is clear of solid props,
+    and the box has clean line of sight from the camera eye at reset.
+    """
+    import pybullet as p
+    from fpv_sim.utils.terrain import TERRAINS_DIR
+    city_spec = json.loads((TERRAINS_DIR / '{:s}.json'.format(LEVEL_3_CITY)).read_text())
+    objects = city_spec['objects']
+
+    rng = np.random.default_rng(seed)
+    client = p.connect(p.DIRECT)
+    try:
+        city_ids, box_id = _load_world(client, objects, with_box=True)
+        solids = [b for o, b in zip(objects, city_ids)
+                  if o['type'] == 'urdf' and o['asset'] != 'bush.urdf']
+        probe = p.createMultiBody(baseMass=0,
+                                  baseCollisionShapeIndex=p.createCollisionShape(p.GEOM_SPHERE,
+                                                                                  radius=LEVEL_3_DRONE_RADIUS,
+                                                                                  physicsClientId=client),
+                                  baseVisualShapeIndex=-1, physicsClientId=client)
+        box_z = BOX_SIZE[2] / 2
+        setups = []
+        for d in LEVEL_1_DISTANCES:
+            h_cap = max(2., _level_1_height_cap(d))
+            target_half = max(50., min(220., 245. - d - 5.))
+            done = 0
+            for _ in range(LEVEL_3_MAX_ATTEMPTS):
+                if done >= LEVEL_1_PER_DISTANCE:
+                    break
+                tx, ty = rng.uniform(-target_half, target_half, 2)
+                box_yaw = rng.uniform(0, 2 * math.pi)
+                p.resetBasePositionAndOrientation(box_id, (tx, ty, 0),
+                                                  p.getQuaternionFromEuler((0, 0, box_yaw)),
+                                                  physicsClientId=client)
+                p.performCollisionDetection(physicsClientId=client)
+                if any(p.getClosestPoints(box_id, b, 0, physicsClientId=client) for b in solids):
+                    continue
+                phi = rng.uniform(0, 2 * math.pi)
+                dx, dy = tx + d * math.cos(phi), ty + d * math.sin(phi)
+                if max(abs(dx), abs(dy)) >= 248:
+                    continue
+                h = rng.uniform(2., h_cap)
+                p.resetBasePositionAndOrientation(probe, (dx, dy, h),
+                                                  p.getQuaternionFromEuler((0, 0, 0)),
+                                                  physicsClientId=client)
+                p.performCollisionDetection(physicsClientId=client)
+                if any(p.getClosestPoints(probe, b, 0, physicsClientId=client) for b in solids):
+                    continue
+                depression = math.atan2(h, d)
+                bearing = math.atan2(ty - dy, tx - dx)
+                yaw_max = math.radians(CAM_HFOV_DEG / 2 - SAFETY_DEG - 10)
+                roll = rng.uniform(-math.radians(15.), math.radians(15.))
+                pitch = rng.uniform(*_level_1_pitch_window(depression))
+                yaw_att = bearing + rng.uniform(-yaw_max, yaw_max)
+                quat = p.getQuaternionFromEuler((roll, pitch, yaw_att))
+                rot = np.array(p.getMatrixFromQuaternion(quat)).reshape(3, 3)
+                eye = np.array([dx, dy, h]) + rot @ np.array([0.30, 0., 0.])
+                # Clean LOS: one ray from the camera eye to the box centre (inside the box volume, so
+                # PyBullet's rayTest reports the box's entry face along the ray). Combined with level_1's
+                # FOV geometry invariant (box centre inside the camera's FOV cone), a single ray suffices.
+                if p.rayTest(eye.tolist(), [tx, ty, box_z], physicsClientId=client)[0][0] != box_id:
+                    continue
+                setups.append({
+                    'target': {'position_m': [round(tx, 2), round(ty, 2), 0],
+                               'rpy_rad': [0, 0, round(box_yaw % (2 * math.pi), 4)],
+                               'context': 'attack, d={:.0f} m, h={:.1f} m (city)'.format(d, h)},
+                    'start':  {'position_m': [round(dx, 2), round(dy, 2), round(h, 2)],
+                               'rpy_rad': [round(roll, 4), round(pitch, 4), round(yaw_att, 4)]},
+                })
+                done += 1
+            if done < LEVEL_1_PER_DISTANCE:
+                raise RuntimeError('level_3: only {:d}/{:d} setups at d={:.0f} m'.format(
+                    done, LEVEL_1_PER_DISTANCE, d))
+        return {'name': 'level_3', 'setups': setups, 'objects': objects}
+    finally:
+        p.disconnect(client)
+
+def write_level_3():
+    spec = build_level_3()
+    (TERRAINS / 'level_3.json').write_text(json.dumps(spec, indent=1) + '\n')
+    return spec
+
+def level_3_previews(spec):
+    """Top-down city map with all setups overlaid, and a per-setup thumbnail sheet."""
+    from PIL import Image, ImageDraw
+    PRE = TERRAINS / 'previews'
+    PRE.mkdir(exist_ok=True)
+    objects = spec['objects']
+    setups = spec['setups']
+
+    def to_px(x, y, w, half):
+        return w / 2 + x / half * (w / 2 - 10), w / 2 - y / half * (w / 2 - 10)
+
+    # City palette: buildings grey, cars reddish, electric poles dark grey, trees green, bushes olive, shed brown.
+    kind_colour = {'building_01.urdf': (120, 120, 120), 'building_02.urdf': (110, 110, 115),
+                   'building_03.urdf': (130, 130, 125), 'building_04.urdf': (115, 115, 120),
+                   'car_01.urdf': (170, 60, 50), 'car_02.urdf': (180, 70, 55), 'car_03.urdf': (160, 55, 45),
+                   'electric_pole.urdf': (70, 70, 70),
+                   'tree.urdf': (26, 70, 26), 'tree_02.urdf': (30, 80, 30),
+                   'bush.urdf': (45, 70, 25), 'shed.urdf': (120, 60, 30)}
+    big = ('building_01.urdf', 'building_02.urdf', 'building_03.urdf', 'building_04.urdf')
+    top = Image.new('RGB', (600, 600), (30, 32, 36))
+    d = ImageDraw.Draw(top)
+    for o in objects:
+        if o['type'] != 'urdf':
+            continue
+        px, py = to_px(o['position_m'][0], o['position_m'][1], 600, 251.)
+        c = kind_colour.get(o['asset'], (60, 60, 60))
+        r = 3 if o['asset'] in big else (2 if o['asset'] in ('tree.urdf', 'tree_02.urdf') else 1)
+        d.ellipse((px - r, py - r, px + r, py + r), fill=c)
+    for i, s in enumerate(setups, 1):
+        tx, ty, _ = s['target']['position_m']
+        dx, dy, _ = s['start']['position_m']
+        p_t = to_px(tx, ty, 600, 251.)
+        p_d = to_px(dx, dy, 600, 251.)
+        d.line((p_t, p_d), fill=(120, 120, 120))
+        d.ellipse((p_d[0] - 3, p_d[1] - 3, p_d[0] + 3, p_d[1] + 3), fill=(60, 140, 230))
+        d.ellipse((p_t[0] - 5, p_t[1] - 5, p_t[0] + 5, p_t[1] + 5), outline=(255, 80, 60), width=2)
+        if i % 5 == 1:
+            d.text((p_t[0] + 6, p_t[1] - 6), 'v{:d}'.format(i), fill=(255, 255, 255))
+    top.save(PRE / 'level_3.png')
+
+    cols, thumb = 6, 200
+    rows = math.ceil(len(setups) / cols)
+    sheet = Image.new('RGB', (cols * thumb, rows * thumb), (30, 32, 36))
+    for i, s in enumerate(setups, 1):
+        t = Image.new('RGB', (thumb, thumb), (30, 32, 36))
+        td = ImageDraw.Draw(t)
+        tx, ty, _ = s['target']['position_m']
+        dx, dy, h = s['start']['position_m']
+        # local window: include all props within `span` m of the setup midpoint
+        cx, cy = (tx + dx) / 2, (ty + dy) / 2
+        span = max(20., 2 * max(abs(tx - dx), abs(ty - dy)) + 12)
+        for o in objects:
+            if o['type'] != 'urdf':
+                continue
+            if max(abs(o['position_m'][0] - cx), abs(o['position_m'][1] - cy)) > span:
+                continue
+            px, py = to_px(o['position_m'][0] - cx, o['position_m'][1] - cy, thumb, span / 2)
+            c = kind_colour.get(o['asset'], (60, 60, 60))
+            r = 3 if o['asset'] in big else (2 if o['asset'] in ('tree.urdf', 'tree_02.urdf') else 1)
+            td.ellipse((px - r, py - r, px + r, py + r), fill=c)
+        p_t = to_px(tx - cx, ty - cy, thumb, span / 2)
+        p_d = to_px(dx - cx, dy - cy, thumb, span / 2)
+        td.line((p_t, p_d), fill=(140, 140, 140))
+        td.ellipse((p_d[0] - 4, p_d[1] - 4, p_d[0] + 4, p_d[1] + 4), fill=(60, 140, 230))
+        td.ellipse((p_t[0] - 7, p_t[1] - 7, p_t[0] + 7, p_t[1] + 7), outline=(255, 80, 60), width=2)
+        td.text((4, 4), 'v{:d}  d~{:.0f}m  h={:.1f}m'.format(i, math.hypot(dx - tx, dy - ty), h),
+                fill=(255, 255, 255))
+        sheet.paste(t, (thumb * ((i - 1) % cols), thumb * ((i - 1) // cols)))
+    sheet.save(PRE / 'level_3_targets.png')
+
 if __name__ == '__main__':
     import sys
     if '--level-1' in sys.argv:
@@ -1207,6 +1369,11 @@ if __name__ == '__main__':
         spec = write_level_2()
         level_2_previews(spec)
         print('wrote level_2.json with {:d} setups and previews/level_2{{,_targets}}.png'.format(len(spec['setups'])))
+        sys.exit(0)
+    if '--level-3' in sys.argv:
+        spec = write_level_3()
+        level_3_previews(spec)
+        print('wrote level_3.json with {:d} setups and previews/level_3{{,_targets}}.png'.format(len(spec['setups'])))
         sys.exit(0)
     for a in asset_list:
         write_asset(a)
