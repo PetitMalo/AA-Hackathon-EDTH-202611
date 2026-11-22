@@ -1,7 +1,7 @@
-"""Entraînement PPO.
+"""Entraînement PPO de integral/ et explore/ (choix : run.task de la config). Approche : train.approach.train.
 
-    uv run python -m train.train                                   # config.toml par défaut
-    uv run python -m train.train --config train/config_b.toml
+    uv run python -m train.train                                   # intégral : integral/config.toml
+    uv run python -m train.train --config train/explore/config.toml    # explorateur
     uv run python -m train.train --set run.envs=4 run.total_steps=200000     # essai rapide
     uv run python -m train.train --resume /tmp/fpv_runs/<run>/ckpt/model_5000000.zip --set curriculum.start_stage=1
 
@@ -13,7 +13,6 @@ import os
 os.environ.setdefault("OMP_NUM_THREADS", "1")       # un thread par worker, sinon les 24 envs se gênent
 
 import argparse
-from collections import deque
 from datetime import datetime
 from pathlib import Path
 
@@ -25,70 +24,12 @@ from torch import nn
 
 from handin.policy_net import PI_HIDDEN
 from train import config as cfgmod
-from train.env_wrapper import FINAL_STAGE, make_env_fn
-from train.explore_env import make_explore_env_fn
+from train.base_env import FINAL_STAGE
+from train.explore.callbacks import ExploreStatsCallback
+from train.explore.env import make_explore_env_fn
+from train.integral.callbacks import CurriculumCallback
+from train.integral.env import make_env_fn
 from train.sb3_policy import SB3Extractor, export_policy
-
-OUTCOMES = ("success", "collision", "out_of_arena", "timeout")
-EXPLORE_OUTCOMES = ("detected", "success", "collision", "out_of_arena", "timeout", "coverage_done")
-
-
-class ExploreStatsCallback(BaseCallback):
-    """Explorateur : couverture finale, taux et temps de détection, issues, sur les derniers épisodes."""
-
-    def __init__(self, window=300):
-        super().__init__()
-        self.recent = deque(maxlen=window)
-
-    def _on_step(self):
-        for info, done in zip(self.locals["infos"], self.locals["dones"]):
-            if done and info.get("outcome"):
-                self.recent.append(info)
-        if self.n_calls % 256 == 0 and self.recent:
-            n = len(self.recent)
-            det = [i["t_detect"] for i in self.recent if i["detected"]]
-            self.logger.record("explore/episodes_in_window", n)
-            self.logger.record("explore/coverage_mean", sum(i["coverage"] for i in self.recent) / n)
-            self.logger.record("explore/detection_rate", len(det) / n)
-            if det:
-                self.logger.record("explore/t_detect_mean_s", sum(det) / len(det))
-            for o in EXPLORE_OUTCOMES:
-                self.logger.record(f"explore/{o}_rate", sum(1 for i in self.recent if i["outcome"] == o) / n)
-        return True
-
-
-class CurriculumCallback(BaseCallback):
-    """Suit les issues des épisodes de l'étape courante et passe à l'étape suivante au seuil."""
-
-    def __init__(self, cfg, stage, out):
-        super().__init__()
-        self.cur, self.stage, self.out = cfg["curriculum"], stage, Path(out)
-        self.recent = deque(maxlen=self.cur["window"])
-
-    def _on_training_start(self):
-        self.training_env.env_method("set_stage", self.stage)
-
-    def _on_step(self):
-        for info, done in zip(self.locals["infos"], self.locals["dones"]):
-            if done and info.get("outcome") and info.get("stage") == self.stage:
-                self.recent.append(info["outcome"])
-        n = len(self.recent)
-        rates = {o: (sum(1 for x in self.recent if x == o) / n if n else 0.) for o in OUTCOMES}
-        if self.n_calls % 256 == 0:
-            self.logger.record("curriculum/stage", self.stage)
-            self.logger.record("curriculum/episodes_in_window", n)
-            for o in OUTCOMES:
-                self.logger.record(f"curriculum/{o}_rate", rates[o])
-        if (self.stage < FINAL_STAGE and n >= self.cur["min_episodes"]
-                and rates["success"] >= self.cur["thresholds"][self.stage]):
-            print(f"[curriculum] étape {self.stage} réussie ({rates['success']:.0%} sur {n} épisodes, "
-                  f"{self.num_timesteps} pas) -> étape {self.stage + 1}", flush=True)
-            self.model.save(self.out / "ckpt" / f"stage{self.stage}_done.zip")
-            export_policy(self.model, self.out / "ckpt" / f"policy_stage{self.stage}_done.pt")
-            self.stage += 1
-            self.recent.clear()
-            self.training_env.env_method("set_stage", self.stage)
-        return True
 
 
 class CheckpointCallback(BaseCallback):

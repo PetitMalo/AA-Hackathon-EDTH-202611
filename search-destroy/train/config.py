@@ -1,10 +1,10 @@
-"""Chargement de train/config.toml avec surcharges "section.clé=valeur" (valeur au format TOML)."""
+"""Chargement de train/integral/config.toml avec surcharges "section.clé=valeur" (valeur au format TOML)."""
 
 import shutil
 import tomllib
 from pathlib import Path
 
-DEFAULT = Path(__file__).with_name("config.toml")
+DEFAULT = Path(__file__).parent / "integral" / "config.toml"
 SCENE_VERSIONS = {"field": 18, "forest": 40, "village": 40, "city": 40}
 
 

@@ -1,6 +1,6 @@
-"""Vérifie train.env_wrapper.FPVTrainEnv : départs, curriculum, terrain chargé, reward, fins d'épisode.
+"""Vérifie train.integral.env.FPVTrainEnv : départs, curriculum, terrain chargé, reward, fins d'épisode.
 
-uv run python -m train.check_env            # 4 scènes x 4 étapes, ~2 min
+uv run python -m train.integral.check            # 4 scènes x 4 étapes, ~2 min
 """
 
 import argparse
@@ -13,7 +13,8 @@ import pybullet as p
 
 from fpv_sim.utils.terrain import TERRAINS_DIR
 from train import config as cfgmod
-from train.env_wrapper import ARENA, CLEAR_M, FINAL_STAGE, FPVTrainEnv, _wrap
+from train.base_env import ARENA, CLEAR_M, FINAL_STAGE, _wrap
+from train.integral.env import FPVTrainEnv
 
 OUTCOMES = {"success", "collision", "out_of_arena", "timeout"}
 

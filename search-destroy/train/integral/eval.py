@@ -1,7 +1,7 @@
 """Évalue un policy.pt sur les terrains de VALIDATION d'un run, avec le protocole des mentors.
 
-    uv run python -m train.eval_holdout --run /tmp/fpv_runs/<date> --runs 3 --workers 20
-    uv run python -m train.eval_holdout --run /tmp/fpv_runs/<date> --weights /tmp/fpv_runs/<date>/ckpt/policy_5000000.pt
+    uv run python -m train.integral.eval --run /tmp/fpv_runs/<date> --runs 3 --workers 20
+    uv run python -m train.integral.eval --run /tmp/fpv_runs/<date> --weights /tmp/fpv_runs/<date>/ckpt/policy_5000000.pt
 
 Réutilise run_target et summarize de fpv_sim.scripts.evaluate : même départ officiel (225-275 m du centre),
 mêmes issues, mêmes métriques. Seuls les terrains diffèrent : ceux de <run>/holdout_terrains.txt.

@@ -1,7 +1,7 @@
-"""Vérifie train.explore_env.ExploreEnv avec des politiques scriptées et affiche les termes de reward.
+"""Vérifie train.explore.env.ExploreEnv avec des politiques scriptées et affiche les termes de reward.
 
-    uv run python -m train.check_explore                     # 3 politiques x 2 terrains, 30 s de vol chacune
-    uv run python -m train.check_explore --seconds 120 --terrains city@v1 forest@v2
+    uv run python -m train.explore.check                     # 3 politiques x 2 terrains, 30 s de vol chacune
+    uv run python -m train.explore.check --seconds 120 --terrains city@v1 forest@v2
 
 But : vérifier les ordres de grandeur (couverture vs détection vs pénalités), que la couverture est
 monotone, et que tourner sur place en altitude ne rapporte pas « trop » par rapport à avancer.
@@ -15,9 +15,9 @@ from pathlib import Path
 import numpy as np
 
 from train import config as cfgmod
-from train.explore_env import ExploreEnv
+from train.explore.env import ExploreEnv
 
-CONFIG = str(Path(__file__).with_name("config_explore.toml"))
+CONFIG = str(Path(__file__).with_name("config.toml"))
 
 
 def hover(env, t):

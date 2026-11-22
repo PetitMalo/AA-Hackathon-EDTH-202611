@@ -2,9 +2,9 @@
 # Lance un entraînement en arrière-plan sur une machine distante (survit à la déconnexion).
 #
 #   train/launch.sh <machine> <nom> <config> [surcharges --set ...]
-#   train/launch.sh indre explore_default train/config_explore.toml
-#   train/launch.sh niva explore_pure train/config_explore.toml explore.end_on_detect=false explore.coverage_goal=0.8
-#   RESUME=runs/explorer.zip train/launch.sh lada approach_from_explorer train/config.toml   # reprise d'un checkpoint
+#   train/launch.sh indre explore_default train/explore/config.toml
+#   train/launch.sh niva explore_pure train/explore/config.toml explore.end_on_detect=false explore.coverage_goal=0.8
+#   RESUME=runs/explorer.zip train/launch.sh lada approach_from_explorer train/integral/config.toml   # reprise d'un checkpoint
 #
 # Sorties sur la machine : /tmp/fpv_runs/<nom>/<date>/ (policy.pt, ckpt/, tb/) et log /tmp/fpv_logs/<nom>.log
 # Suivi :  ssh <machine> tail -f /tmp/fpv_logs/<nom>.log
