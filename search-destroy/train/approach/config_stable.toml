@@ -1,0 +1,78 @@
+# Agent d'approche (cible déjà vue), level 2 : arbres, buissons, rochers + cible.
+#   uv run python -m train.approach.train
+#   uv run python -m train.approach.train --set run.envs=4 run.total_steps=200000
+# Benchmark : les 60 départs fixes de level_3.json (train.approach.eval --bench).
+
+[run]
+envs = 24
+seed = 0
+out_dir = "/tmp/fpv_runs"          # disque LOCAL (pas le NFS)
+total_steps = 20_000_000
+save_every_steps = 250_000
+
+[terrains]
+# level_3.json : format "setups" du camarade, complété d'une clé "targets".
+# Sur sol nu la position de la cible ne change rien : pas de holdout, la validation = départs fixes du benchmark.
+scenes = ["level_2", "level_3"]
+bench = "level_3"
+
+[curriculum]
+start_stage = 5
+thresholds = [0.5, 0.5, 0.4, 0.4, 0.3]   # seuils rapides : meilleurs sur le level 1 (curfast)
+window = 300
+min_episodes = 200
+replay_previous = 0.833            # toutes les distances à parts égales
+# [d_mean (m), d_sigma relatif, z_inf (m), z_sup (m), psi_max (deg), v_max (m/s), timeout (s)]
+# d = distance horizontale au centre de la boîte. Plages calées sur les setups de level_1.json :
+# z jusqu'à ~11 m à 5 m, ~22 m à 10 m, ~30 m au-delà ; |psi| jusqu'à ~37° à toutes les distances.
+# z_inf >= 3 m : le départ doit être à 2 m de tout objet, sol compris.
+stages = [
+  [5,   0.1, 3, 12, 40, 1,  8],
+  [10,  0.1, 3, 22, 40, 2,  10],
+  [20,  0.1, 3, 30, 40, 4,  15],
+  [40,  0.1, 3, 30, 40, 6,  20],
+  [80,  0.1, 3, 30, 40, 8,  30],
+  [160, 0.1, 3, 30, 40, 10, 45],
+]
+
+[approach]
+warmup_steps = 5                   # pas tenus à l'attitude de départ, pour initialiser le Kalman cible
+max_tries = 20                     # re-tirages du départ si la cible n'est pas détectée
+yaw_noise_deg = 2.0                # erreur de cap résiduelle de l'estimateur au relais
+roll_max_deg = 15.0                # comme les setups (±15°)
+pitch_margin_deg = 4.0             # la cible reste à 4° des bords haut / bas de l'image
+pitch_max_deg = 60.0               # pleine course du mode angle, comme les setups
+ground_half_m = 250.0              # sol 500 x 500 m
+use_local = true
+hard_frac = 0.5
+
+[reward]
+progress = 1.0                     # par mètre gagné vers la surface de la boîte
+detect = 0.0                       # par pas où la cible est à l'écran
+lost = 0.02                        # par pas où elle n'y est pas : même écart vu / pas vu qu'un bonus,
+                                   # sans rendre « rester sur place à regarder » rentable
+center = 0.005                     # x distance du centre de la box au centre de l'image (0..0,7)
+time = 0.004                       # par pas. Garde-fou : (time + lost) x 1350 + |timeout| = 42 < |collision|
+smooth = 0.01
+success = 50.0                     # + success_speed * (1 - t / timeout)
+success_speed = 50.0
+collision = -150.0                 # garde-fou : spin_max + (time + lost) x 1350 + |timeout| = 122 < 150
+out_of_arena = -150.0
+proximity = 0.5
+spin = 0.05                        # par degré de lacet au-delà de spin_free_dps (voir env_stable.py)
+spin_free_dps = 30.0
+spin_max = 80.0
+timeout = -10.0
+
+[ppo]
+lr = 1e-4
+n_steps = 256
+batch_size = 2048
+n_epochs = 5
+gamma = 0.99
+gae_lambda = 0.95
+ent_coef = 0.003
+clip_range = 0.2
+max_grad_norm = 0.5
+log_std_init = -1.0
+init_log_std = -1.2                # plancher du bruit au démarrage depuis un modèle entraîné

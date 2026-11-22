@@ -1,6 +1,6 @@
 # Poids des agents d'exploration
 
-Agents PPO « explorateur » : chercher la cible, puis s'en approcher à 10 m (`train/explore_env.py`, `ExploreReachEnv`).
+Agents PPO « explorateur » : chercher la cible, puis s'en approcher à 10 m (`train/explore/env.py`, `ExploreReachEnv`).
 Ils ne finissent pas le vol seuls : `handin/combined_agent.py` passe la main à un agent d'approche dès la détection,
 et la reprend si la cible est perdue plus de 4 s.
 
@@ -62,7 +62,7 @@ Le 20M de femur (non inclus) illustre le piège : 93 % à l'entraînement, mais 
 
 ## Réglages
 
-Tous : `train/config_explore_reach.toml`, repris de `runs/femur_explorer.zip` (4M pas).
+Tous : `train/explore/config_reach.toml`, repris de `runs/femur_explorer.zip` (4M pas).
 Base : `collision=-30`, `progress=0.5`, `cov_after_detect=true`, seed 0.
 
 | Poids | Run | Checkpoint | Différence avec la base | SHA-1 |
@@ -89,7 +89,8 @@ uv run python -m train.eval_combined --explorer weights/explore/femur.pt \
 il fait du hover tant que la cible n'est pas vue.
 
 Ces `.pt` ne contiennent que l'acteur. Pour un `--resume`, il faut le `model_<pas>.zip`, qui est dans
-`/tmp/fpv_runs/<run>/<date>/ckpt/` sur la machine du run (perdu si `/tmp` est vidé).
+`/tmp/fpv_runs/<run>/<date>/ckpt/` sur la machine du run, copié le 22/11 à 12h20 avec les logs sur **venturi** :
+`/Data/arthur.fournier/fpv_explore/<machine>/tmp/fpv_runs/<run>/<date>/ckpt/`.
 
 ## Limites
 
