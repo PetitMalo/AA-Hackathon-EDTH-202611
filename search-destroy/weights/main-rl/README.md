@@ -23,11 +23,11 @@ timeout 120 s, politique déterministe, `--seed 0`.
 | 6= | `rotule.pt` | 20M | 78 % | 67-86 | 19 % | 50 % | 88 % | 85 % | 95 % |
 | 6= | `royce.pt` | 20,5M | 78 % | 67-86 | 22 % | 60 % | 100 % | 75 % | 90 % |
 | 8 | `marne.pt` | 20,5M | 75 % | 64-84 | 25 % | 60 % | 88 % | 90 % | 70 % |
-| 9 | `moselle.pt` | 20,5M | 72 % | 60-81 | 25 % | 55 % | 75 % | 85 % | 75 % |
-| 10 | `loire.pt` | 20M | LOIRE_S0 |
+| 9 | `loire.pt` | 20M | 74 % | 62-83 | 25 % | 40 % | 88 % | 90 % | 85 % |
+| 10 | `moselle.pt` | 20,5M | 72 % | 60-81 | 25 % | 55 % | 75 % | 85 % | 75 % |
 | 11 | `essonne.pt` | 10M | 59 % | 47-70 | 34 % | 45 % | 75 % | 65 % | 60 % |
 
-Sur 68 vols, les rangs 2 à 9 ne sont pas départageables.
+Sur 68 vols, les rangs 2 à 10 ne sont pas départageables.
 
 ## Confirmation des finalistes
 
@@ -43,8 +43,11 @@ Sur 68 vols, les rangs 2 à 9 ne sont pas départageables.
 
 | Poids | Succès | city | field | forest | village |
 |---|--:|--:|--:|--:|--:|
-| **`venturi.pt`** | VENTURI_FULL |
+| **`venturi.pt`** | **84 %** | 71 % | 89 % | 88 % | 90 % |
 | `rotule.pt` | 72 % | 48 % | 83 % | 88 % | 75 % |
+
+Sur ces 414 vols aux départs identiques, venturi gagne 81 vols que rotule rate et en perd 32 (McNemar p = 5e-06).
+Hors des 68 vols qui ont servi à le choisir : venturi 83 %, rotule 71 % (346 vols).
 
 ## Réglages de chaque poids
 
