@@ -18,14 +18,14 @@ import numpy as np
 from gymnasium import spaces
 
 from handin.features import COARSE_HALF, COARSE_RES, FINE_RES, SHAPES, Features
-from train.env_wrapper import ARENA, FINAL_STAGE, FPVTrainEnv
+from train.base_env import ARENA, FINAL_STAGE, BaseFPVEnv
 
 CELL_M2 = COARSE_RES ** 2                        # 156,25 m² par cellule grossière
 FINE_PER_COARSE = (COARSE_RES / FINE_RES) ** 2   # cellules fines de 1 m par cellule grossière
 TERMINAL = ("detected", "success", "collision", "out_of_arena", "coverage_done")
 
 
-class ExploreEnv(FPVTrainEnv):
+class ExploreEnv(BaseFPVEnv):
     def __init__(self, cfg, terrains, seed=0):
         gym.Env.__init__(self)
         self.ex = cfg["explore"]

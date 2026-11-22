@@ -33,7 +33,7 @@ from gymnasium import spaces
 from fpv_sim.envs.approach_aviary import ApproachAviary
 from fpv_sim.utils.terrain import TERRAINS_DIR
 from handin.features import BOX_HALF_H, HFOV, SHAPES, TILT, VEC_DIM, Features
-from train.env_wrapper import ARENA, CLEAR_M, FPVTrainEnv
+from train.base_env import ARENA, CLEAR_M, BaseFPVEnv
 
 VFOV_HALF = np.arctan(np.tan(HFOV / 2) * 90 / 160)          # ~34,8°
 CAM_BOTTOM = VFOV_HALF - TILT                                # bord bas de l'image sous l'horizon, à plat (~9,8°)
@@ -54,7 +54,7 @@ def _rz(a):
     return np.array([[c, -s, 0.], [s, c, 0.], [0., 0., 1.]])
 
 
-class ApproachEnv(FPVTrainEnv):
+class ApproachEnv(BaseFPVEnv):
     def __init__(self, cfg, terrains, stage=0, seed=0):
         gym.Env.__init__(self)
         self.cur, self.rw, self.ap = cfg["curriculum"], cfg["reward"], cfg["approach"]

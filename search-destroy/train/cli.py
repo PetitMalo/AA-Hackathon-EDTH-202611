@@ -5,11 +5,11 @@ les arguments passés après la commande sont transmis tels quels :
 
     uv run fpv-train [--set ...] [--resume ckpt.zip]     train.train
     uv run fpv-smoke [--set ...]                          train.train, essai court sur 4 envs
-    uv run fpv-eval --run <dossier>                       train.eval_holdout
+    uv run fpv-eval --run <dossier>                       train.integral.eval
     uv run fpv-tb [--logdir ...]                          TensorBoard sur /tmp/fpv_runs
     uv run fpv-check                                      handin.check_handin
     uv run fpv-check-env / -estimator / -features         bancs de test de train/
-    uv run fpv-check-explore                              train.check_explore (env d'exploration)
+    uv run fpv-check-explore                              train.explore.check (env d'exploration)
 """
 
 import runpy
@@ -34,7 +34,7 @@ def smoke():
 
 
 def evaluate():
-    _run("train.eval_holdout")
+    _run("train.integral.eval")
 
 
 def check_handin():
@@ -42,7 +42,7 @@ def check_handin():
 
 
 def check_env():
-    _run("train.check_env")
+    _run("train.integral.check")
 
 
 def check_estimator():
@@ -54,7 +54,7 @@ def check_features():
 
 
 def check_explore():
-    _run("train.check_explore")
+    _run("train.explore.check")
 
 
 def tensorboard():

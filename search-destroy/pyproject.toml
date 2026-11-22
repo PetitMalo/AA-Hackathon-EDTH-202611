@@ -32,7 +32,7 @@ build-backend = "setuptools.build_meta"
 include = ["fpv_sim*", "handin*", "train*"]
 
 [tool.setuptools.package-data]
-train = ["config.toml"]
+train = ["*/*.toml"]
 fpv_sim = ["assets/drone/*.urdf", "assets/drone/*.dae", "assets/drone/LICENSE", "assets/objects/*.urdf", "assets/objects/meshes/*.obj", "assets/terrains/*.json"]
 
 [tool.pytest.ini_options]

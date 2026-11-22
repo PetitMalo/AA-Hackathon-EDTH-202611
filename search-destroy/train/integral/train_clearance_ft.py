@@ -1,16 +1,16 @@
-"""Affinage : train.train_clearance + learning rate forcé à la reprise.
+"""Affinage : train.integral.train_clearance + learning rate forcé à la reprise.
 
-    FPV_FINETUNE_LR=1e-4 uv run python -m train.train_clearance_ft --resume <ckpt>.zip --set ...
+    FPV_FINETUNE_LR=1e-4 uv run python -m train.integral.train_clearance_ft --resume <ckpt>.zip --set ...
 
 En reprise, SB3 recharge le learning rate sauvegardé dans le checkpoint (3e-4) et ignore --set ppo.lr.
 Ici, PPO.load reçoit custom_objects={learning_rate, lr_schedule} = FPV_FINETUNE_LR.
-Sans FPV_FINETUNE_LR, identique à train.train_clearance.
+Sans FPV_FINETUNE_LR, identique à train.integral.train_clearance.
 """
 
 import os
 
 import train.train as base
-from train.env_clearance import make_env_fn
+from train.integral.env_clearance import make_env_fn
 
 base.make_env_fn = make_env_fn
 

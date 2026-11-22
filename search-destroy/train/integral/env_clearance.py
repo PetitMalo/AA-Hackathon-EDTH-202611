@@ -14,7 +14,7 @@ Réglages (section [reward], via --set) :
 import numpy as np
 import pybullet as p
 
-from train.env_wrapper import FPVTrainEnv
+from train.integral.env import FPVTrainEnv
 
 
 class ClearanceEnv(FPVTrainEnv):
