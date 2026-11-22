@@ -15,3 +15,8 @@ fleet/runs_approach.txt
 fleet/runs_stopped.txt
 fleet/manche_runs.txt
 fleet/new_runs.txt
+*.json
+*.sh
+fleet/
+*.txt
+eval/
