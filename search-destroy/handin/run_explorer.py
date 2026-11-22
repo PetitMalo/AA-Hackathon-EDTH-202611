@@ -13,7 +13,7 @@ import pybullet as p
 from PIL import Image
 
 from fpv_sim.envs.approach_aviary import ApproachAviary
-from fpv_sim.scripts.evaluate import random_start
+from fpv_sim.scripts.evaluate import mission_start
 from handin.agent import Agent
 
 
@@ -60,8 +60,7 @@ def main():
     env = ApproachAviary(terrain=args.terrain)
     agent = Agent()
     try:
-        env.reset(seed=args.seed)
-        obs, start = random_start(env, np.random.default_rng(args.seed))
+        obs, start = mission_start(env, np.random.default_rng(args.seed), args.terrain)
         agent.reset()
         true_track, est_track, lat = [], [], []
         outcome = "timeout"

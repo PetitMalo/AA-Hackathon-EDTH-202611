@@ -7,7 +7,19 @@ dependencies = [
     "gym-pybullet-drones",
     "mcap>=1.6.0",
     "pygame>=2.6",
+    "tensorboard>=2.21.0",
 ]
+
+[project.scripts]
+fpv-train = "train.cli:train"
+fpv-smoke = "train.cli:smoke"
+fpv-eval = "train.cli:evaluate"
+fpv-tb = "train.cli:tensorboard"
+fpv-check = "train.cli:check_handin"
+fpv-check-env = "train.cli:check_env"
+fpv-check-estimator = "train.cli:check_estimator"
+fpv-check-features = "train.cli:check_features"
+fpv-check-explore = "train.cli:check_explore"
 
 [tool.uv.sources]
 gym-pybullet-drones = { path = "external/gym-pybullet-drones", editable = true }
@@ -17,9 +29,10 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
-include = ["fpv_sim*", "handin*"]
+include = ["fpv_sim*", "handin*", "train*"]
 
 [tool.setuptools.package-data]
+train = ["config.toml"]
 fpv_sim = ["assets/drone/*.urdf", "assets/drone/*.dae", "assets/drone/LICENSE", "assets/objects/*.urdf", "assets/objects/meshes/*.obj", "assets/terrains/*.json"]
 
 [tool.pytest.ini_options]

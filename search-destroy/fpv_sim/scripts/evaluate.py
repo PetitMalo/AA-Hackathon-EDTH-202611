@@ -14,9 +14,10 @@ import numpy as np
 import pybullet as p
 from mcap.writer import Writer
 
-from fpv_sim.utils.terrain import TERRAINS_DIR
+from fpv_sim.utils.terrain import TERRAINS_DIR, terrain_start_pose
 
 TERRAINS = ("field", "forest", "village", "city")
+ATTACK_TERRAINS = ("level_1", "level_2", "level_3")
 FPS = 30
 BUDGET_MS = 1000 / FPS
 ARENA = 350    # |x| or |y| beyond this leaves the arena
@@ -37,7 +38,8 @@ MISSION_PHASE_SCHEMA = {"title": "MissionPhase", "type": "object", "properties":
 
 
 def versions(terrain):
-    return len(json.loads((TERRAINS_DIR / f"{terrain}.json").read_text())["targets"])
+    spec = json.loads((TERRAINS_DIR / f"{terrain}.json").read_text())
+    return len(spec["setups"] if "setups" in spec else spec["targets"])
 
 
 def target_center(env):
@@ -83,6 +85,22 @@ def random_start(env, rng):
     return env._sense(), {"position_m": xyz.tolist(), "yaw_rad": float(yaw), "speed_m_s": float(speed)}
 
 
+def mission_start(env, rng, terrain):
+    """Start of a flight: the `level_*` setup pose when the terrain pins one, else a random search start.
+
+    For attack maps (`level_*`), the drone starts at the setup's `start` pose with the target already in
+    the camera's sight (ApproachAviary reads it at construction); each flight differs only in sensing
+    noise. For the search scenes, falls back to `random_start` (a clear start 225-275 m from the centre).
+    """
+    pose = terrain_start_pose(terrain)
+    if pose is None:
+        return random_start(env, rng)
+    obs, _ = env.reset(seed=int(rng.integers(2 ** 31)))
+    env.vio.reset(env._getDroneStateVector(0))
+    env.imu.reset()
+    return obs, {"position_m": list(pose["position_m"]), "yaw_rad": float(pose["rpy_rad"][2]), "speed_m_s": 0.}
+
+
 class Log:
     """One flight's MCAP file, JSON-encoded so Foxglove opens it as is."""
 
@@ -125,9 +143,9 @@ def log_sensors(log, env, obs, t, step, depth_every):
     return state, info
 
 
-def fly(env, agent, rng, path, timeout_s=120., depth_every=10):
+def fly(env, agent, rng, path, timeout_s=120., depth_every=10, terrain=None):
     """Flies one run with the agent in full command; returns its summary."""
-    obs, start = random_start(env, rng)
+    obs, start = mission_start(env, rng, terrain if terrain is not None else getattr(env, "TERRAIN", None))
     agent.reset()
     log = Log(path)
     record = {"outcome": "timeout", "error": "", **{f"start_{k}": v for k, v in start.items()},
@@ -212,7 +230,7 @@ def run_target(job):
         for run in range(runs):
             run_seed = [seed, sum(map(ord, terrain)), run]
             rng = np.random.default_rng(run_seed)
-            record = fly(env, agent, rng, out / terrain / f"run{run:02d}.mcap", timeout_s, depth_every)
+            record = fly(env, agent, rng, out / terrain / f"run{run:02d}.mcap", timeout_s, depth_every, terrain)
             records.append({"terrain": terrain, "run": run, **record})
     finally:
         env.close()
@@ -250,7 +268,7 @@ def summarize(records):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--runs", type=int, default=10, help="flights per target box")
-    parser.add_argument("--terrains", nargs="+", default=TERRAINS, choices=TERRAINS)
+    parser.add_argument("--terrains", nargs="+", default=TERRAINS, choices=TERRAINS + ATTACK_TERRAINS)
     parser.add_argument("--timeout", type=float, default=120., help="seconds of simulated flight")
     parser.add_argument("--depth-every", type=int, default=10, help="log 1 depth map in N frames (1 = all, ~130 MB a flight)")
     parser.add_argument("--workers", type=int, default=os.cpu_count())

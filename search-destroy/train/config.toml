@@ -1,0 +1,57 @@
+# Configuration de l'entraînement. Surcharge en ligne de commande :
+#   --set ppo.lr=1e-4 curriculum.thresholds=[0.5,0.4,0.3] reward.coverage=0.1
+
+[run]
+envs = 24                          # un processus PyBullet par env, laisser 4 threads libres
+seed = 0
+out_dir = "/tmp/fpv_runs"          # disque LOCAL (pas le NFS)
+total_steps = 200_000_000
+save_every_steps = 1_000_000       # checkpoint + export de policy.pt
+
+[terrains]
+# Cartes utilisées. Les versions "holdout" ne servent JAMAIS à l'entraînement :
+# elles sont réservées à la validation (nouvelles positions de boîte, mêmes cartes).
+scenes = ["field", "forest", "village", "city"]
+holdout_field = [15, 16, 17, 18]                       # field a 18 versions
+holdout_others = [31, 32, 33, 34, 35, 36, 37, 38, 39, 40]   # forest, village, city en ont 40
+
+[curriculum]
+start_stage = 0                    # 0, 1, 2 ou 3 (3 = départ officiel)
+thresholds = [0.6, 0.5, 0.4]       # succès pour passer 0->1, 1->2, 2->3
+window = 300                       # derniers épisodes de l'étape courante pris en compte
+min_episodes = 200                 # minimum avant de pouvoir changer d'étape
+replay_previous = 0.2              # part d'épisodes tirés dans les étapes précédentes
+final_timeout_s = 120              # étape 3
+# Étapes 0 à 2 : [dist_min (m), dist_max (m), cône avant (deg), durée max (s)]
+# Le drone démarre à dist_min..dist_max de la cible, cap à +-20 deg du centre (comme l'évaluation),
+# et la cible doit se trouver à moins de "cône" degrés du cap vers le centre.
+stages = [
+  [15, 40, 30, 20],
+  [40, 100, 45, 40],
+  [100, 180, 70, 80],
+]
+
+[reward]
+progress = 0.2                     # par mètre gagné vers la surface de la boîte
+progress_unseen_factor = 0.3       # étapes >= 2, tant que la cible n'a jamais été détectée
+detect = 0.01                      # par pas où la cible est détectée
+time = 0.002                       # pénalité par pas
+smooth = 0.01                      # x |action - action précédente|^2
+success = 50.0
+collision = -30.0
+out_of_arena = -30.0
+timeout = -5.0
+coverage = 0.05                    # par 1000 m2 de sol nouvellement vu
+coverage_from_stage = 2
+
+[ppo]
+lr = 3e-4
+n_steps = 256                      # par env : rollout = n_steps x envs
+batch_size = 2048
+n_epochs = 5
+gamma = 0.995
+gae_lambda = 0.95
+ent_coef = 0.005
+clip_range = 0.2
+max_grad_norm = 0.5
+log_std_init = -1.0                # bruit initial des sticks (~0,37)

@@ -14,7 +14,7 @@ import pybullet as p
 import pygame
 
 from fpv_sim.envs.approach_aviary import ApproachAviary
-from fpv_sim.scripts.evaluate import random_start
+from fpv_sim.scripts.evaluate import mission_start
 from fpv_sim.utils.perception import Camera, draw_box
 from handin.agent import Agent
 from handin.run_explorer import map_rgb
