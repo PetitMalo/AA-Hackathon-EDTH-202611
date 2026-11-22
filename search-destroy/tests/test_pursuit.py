@@ -80,7 +80,7 @@ def test_image_correction_lowers_the_goal_when_the_box_looks_too_steep():
 
 
 def test_nose_locked_on_the_box_and_pitch_floor_keeps_it_in_view():
-    tp, camera = make()
+    tp, camera = make(PursuitConfig(pitch_floor=True))     # the floor is opt-in (off by default, see PursuitConfig)
     p = np.array([40., 30., 8.])
     cam_pos, cam_R = level_cam(camera, p, 0.)
     plan = tp.update(est(p, 0.), tracker(), {"detected": 0, "box": np.zeros(4)}, far_depth(), cam_pos, cam_R,
@@ -95,7 +95,7 @@ def test_nose_locked_on_the_box_and_pitch_floor_keeps_it_in_view():
 
 
 def test_no_pitch_floor_only_when_the_corridor_is_blocked():
-    tp, camera = make()
+    tp, camera = make(PursuitConfig(pitch_floor=True))     # opt-in: the floor is exercised only when on
     p = np.array([40., 0., 8.])
     cam_pos, cam_R = level_cam(camera, p, np.pi)
     none = {"detected": 0, "box": np.zeros(4)}
@@ -108,7 +108,7 @@ def test_no_pitch_floor_only_when_the_corridor_is_blocked():
 
 
 def test_strike_on_the_line_of_sight_then_back_off_when_lost():
-    tp, camera = make()
+    tp, camera = make(PursuitConfig(pitch_floor=True))     # opt-in: the strike's C4 floor only applies when on
     c = tp.cfg
     p = np.array([10., 0., 2.5])
     cam_pos, cam_R = level_cam(camera, p, np.pi, pitch=np.radians(6.))
