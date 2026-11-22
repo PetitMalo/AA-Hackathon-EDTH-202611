@@ -15,6 +15,7 @@ from PIL import Image
 from fpv_sim.envs.approach_aviary import ApproachAviary
 from fpv_sim.scripts.evaluate import mission_start
 from handin.agent import Agent
+from handin.explorer import FrontierExplorer
 
 
 def map_rgb(voxel_map):
@@ -55,21 +56,33 @@ def main():
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--time", type=float, default=120.)
     ap.add_argument("--out", default="out/explorer_map.png")
+    ap.add_argument("--agent", choices=["frontier", "net"], default="frontier",
+                    help="frontier: deterministic FrontierExplorer (default); "
+                         "net: Arthur's neural-net Agent, with a parallel explorer for the map/telemetry")
     args = ap.parse_args()
 
     env = ApproachAviary(terrain=args.terrain)
-    agent = Agent()
+    use_net = args.agent == "net"
+    agent = Agent() if use_net else FrontierExplorer()
+    viz = FrontierExplorer() if use_net else None       # parallel explorer for the map/telemetry in net mode
     try:
         obs, start = mission_start(env, np.random.default_rng(args.seed), args.terrain)
         agent.reset()
+        if viz is not None:
+            viz.reset()
         true_track, est_track, lat = [], [], []
         outcome = "timeout"
         for step in range(int(args.time * 30)):
             t0 = time.perf_counter()
-            action = agent.act(obs)
+            if use_net:
+                action = agent.act(obs)
+                viz.step(obs)
+            else:
+                action = agent.step(obs)
             lat.append(time.perf_counter() - t0)
             obs, _, terminated, truncated, info = env.step(action)
-            ex = agent.explorer.info
+            explorer = viz if viz is not None else agent
+            ex = explorer.info
             true_track.append(env.pos[0].copy())
             if ex.position is not None:
                 est_track.append(ex.position)
@@ -89,12 +102,12 @@ def main():
             if terminated or truncated:
                 outcome = "success" if info["is_success"] else "collision" if info["collision"] else "terminated"
                 break
-        if agent.explorer.cfg.use_mpc:
-            print(f"corridor replans={agent.explorer.planner.n_replans}")
+        if explorer.cfg.use_mpc:
+            print(f"corridor replans={explorer.planner.n_replans}")
         print(f"outcome={outcome} t={step / 30:.1f}s mean_latency={1e3 * np.mean(lat):.1f}ms "
               f"max_latency={1e3 * np.max(lat):.1f}ms")
         box_xy = np.array(p.getBasePositionAndOrientation(env.TERRAIN_IDS[0], physicsClientId=env.CLIENT)[0][:2])
-        save_map(agent.explorer, args.out, true_track, est_track, box_xy)
+        save_map(explorer, args.out, true_track, est_track, box_xy)
         print("map saved to", args.out)
     finally:
         env.close()

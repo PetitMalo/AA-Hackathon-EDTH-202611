@@ -2,6 +2,7 @@
 
     uv run python -m handin.view_explorer --terrain village@v1 --seed 0
     uv run python -m handin.view_explorer --terrain city@v12 --eval-run 0   # replays run 0 of `evaluate` on city@v12
+    uv run python -m handin.view_explorer --terrain field@v1 --agent net    # neural-net Agent + parallel explorer map
 
 Keys: SPACE pause, N next flight (new seed, or next eval run), F fast mode (no 30 FPS limit), ESC / close to quit.
 The true pose and box position are only drawn for debugging, never given to the agent.
@@ -14,9 +15,10 @@ import pybullet as p
 import pygame
 
 from fpv_sim.envs.approach_aviary import ApproachAviary
-from fpv_sim.scripts.evaluate import mission_start
+from fpv_sim.scripts.evaluate import mission_start, random_start
 from fpv_sim.utils.perception import Camera, draw_box
 from handin.agent import Agent
+from handin.explorer import FrontierExplorer
 from handin.run_explorer import map_rgb
 
 FPV_SIZE = (640, 360)
@@ -28,9 +30,15 @@ MODE_COLOURS = {"init": "gray", "explore": "deepskyblue", "target": "orange", "a
 
 
 class Viewer:
-    def __init__(self, terrain, seed, timeout_s, eval_run=None):
+    def __init__(self, terrain, seed, timeout_s, eval_run=None, agent_kind="frontier"):
         self.env = ApproachAviary(terrain=terrain)
-        self.agent = Agent()
+        self.kind = agent_kind
+        if agent_kind == "net":           # neural net flies; a parallel explorer paints the map
+            self.agent = Agent()
+            self.viz = FrontierExplorer()
+        else:                              # the deterministic explorer both flies and paints
+            self.agent = FrontierExplorer()
+            self.viz = None
         self.fpv_cam = Camera(self.env.CLIENT, width=480, height=270)
         self.terrain, self.seed, self.timeout_s = terrain, seed, timeout_s
         self.eval_run = eval_run           # None: free seed; int: same start as fpv_sim.scripts.evaluate's run
@@ -39,6 +47,11 @@ class Viewer:
         self.font = pygame.font.Font(None, 26)
         self.clock = pygame.time.Clock()
         self.new_flight()
+
+    @property
+    def explorer(self):
+        """Unified viz source: the parallel explorer in net mode, the agent itself in frontier mode."""
+        return self.viz if self.viz is not None else self.agent
 
     def new_flight(self):
         self.env.reset(seed=self.seed)
@@ -49,6 +62,8 @@ class Viewer:
             label = f"eval run {self.eval_run} (--seed {self.seed})"
         self.obs, _ = random_start(self.env, rng)
         self.agent.reset()
+        if self.viz is not None:
+            self.viz.reset()
         self.step, self.outcome = 0, None
         self.true_track, self.est_track = [], []
         self.box_xy = np.array(p.getBasePositionAndOrientation(self.env.TERRAIN_IDS[0],
@@ -56,12 +71,16 @@ class Viewer:
         pygame.display.set_caption(f"Explorer — {self.terrain} {label}")
 
     def advance(self):
-        action = self.agent.act(self.obs)
+        if self.kind == "net":
+            action = self.agent.act(self.obs)
+            self.viz.step(self.obs)        # keep the map / telemetry in sync with the actual flight
+        else:
+            action = self.agent.step(self.obs)
         self.obs, _, terminated, truncated, info = self.env.step(action)
         self.step += 1
         self.info = info
         self.true_track.append(self.env.pos[0].copy())
-        ex = self.agent.explorer.info
+        ex = self.explorer.info
         if ex.position is not None:
             self.est_track.append(ex.position.copy())
         if terminated or truncated:
@@ -71,7 +90,7 @@ class Viewer:
 
     # ------------------------------------------------------------------ drawing
     def world_to_map(self, xy):
-        m = self.agent.explorer.map
+        m = self.explorer.map
         scale = MAP_PX / m.shape[0]
         i, j = (np.asarray(xy)[:2] - m.origin[:2]) / m.res
         return FPV_SIZE[0] + int(i * scale), int((m.shape[1] - j) * scale)
@@ -88,14 +107,14 @@ class Viewer:
         s.blit(pygame.transform.scale(pygame.surfarray.make_surface(rgb.swapaxes(0, 1)), FPV_SIZE), (0, 0))
 
         # Voxel map, x right / y up
-        img = map_rgb(self.agent.explorer.map)[:, ::-1]
+        img = map_rgb(self.explorer.map)[:, ::-1]
         s.blit(pygame.transform.scale(pygame.surfarray.make_surface(img), (MAP_PX, MAP_PX)), (FPV_SIZE[0], 0))
         for track, col, w in ((self.true_track, "red", 2), (self.est_track, "yellow", 1)):
             pts = [self.world_to_map(q) for q in track[::3]]
             if len(pts) > 1:
                 pygame.draw.lines(s, col, False, pts, w)
         pygame.draw.circle(s, "orange", self.world_to_map(self.box_xy), 5, 2)
-        ex = self.agent.explorer.info
+        ex = self.explorer.info
         if ex.position is not None:
             pos = self.world_to_map(ex.position)
             pygame.draw.circle(s, "yellow", pos, 4)
@@ -175,8 +194,11 @@ def main():
     ap.add_argument("--eval-run", type=int, default=None,
                     help="replay this run of fpv_sim.scripts.evaluate (the `run` column of flights.csv; "
                          "--seed is then evaluate's --seed)")
+    ap.add_argument("--agent", choices=["frontier", "net"], default="frontier",
+                    help="frontier: deterministic FrontierExplorer (default); "
+                         "net: Arthur's neural-net Agent, with a parallel explorer driving the map panel")
     args = ap.parse_args()
-    Viewer(args.terrain, args.seed, args.timeout, args.eval_run).run()
+    Viewer(args.terrain, args.seed, args.timeout, args.eval_run, args.agent).run()
 
 
 if __name__ == "__main__":
