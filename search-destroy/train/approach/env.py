@@ -23,12 +23,15 @@ Fin : success_base + success_speed * (1 - t / timeout), collision, out_of_arena,
 Pas de fin « cible perdue » : un détour (arbre, level 2) ne doit pas être puni par une fin d'épisode.
 """
 
+import json
+
 import gymnasium as gym
 import numpy as np
 import pybullet as p
 from gymnasium import spaces
 
 from fpv_sim.envs.approach_aviary import ApproachAviary
+from fpv_sim.utils.terrain import TERRAINS_DIR
 from handin.features import BOX_HALF_H, HFOV, SHAPES, TILT, VEC_DIM, Features
 from train.env_wrapper import ARENA, CLEAR_M, FPVTrainEnv
 
@@ -37,6 +40,13 @@ CAM_BOTTOM = VFOV_HALF - TILT                                # bord bas de l'ima
 MAX_ANGLE = np.radians(60)                                   # pleine course roll / pitch (AngleControl)
 EXTRA_DIM = 3
 OBS_SHAPES = {"depth": SHAPES["depth"], "vec": (VEC_DIM + EXTRA_DIM,)}
+
+
+def _seg_dist(pts, a, b):
+    """Distance de chaque point (N, 2) au segment [a, b]."""
+    ab = b - a
+    t = np.clip(((pts - a) @ ab) / max(ab @ ab, 1e-9), 0., 1.)
+    return np.linalg.norm(pts - (a + t[:, None] * ab), axis=1)
 
 
 def _rz(a):
@@ -54,8 +64,11 @@ class ApproachEnv(FPVTrainEnv):
         self._targets = {}
         self.sim = ApproachAviary(continuous=True, terrain=self.terrains[0])
         self.feat = Features()
+        self.use_local = bool(self.ap.get("use_local", False))   # + carte d'occupation égocentrée (5, 64, 64)
+        shapes = dict(OBS_SHAPES, **({"local": SHAPES["local"]} if self.use_local else {}))
         self.observation_space = spaces.Dict({k: spaces.Box(-np.inf, np.inf, shape=s, dtype=np.float32)
-                                              for k, s in OBS_SHAPES.items()})
+                                              for k, s in shapes.items()})
+        self._props = {}                                          # scène -> xy des props (départs difficiles)
         self.action_space = spaces.Box(-1., 1., shape=(4,), dtype=np.float32)
         self.final_stage = len(self.cur["stages"]) - 1
         self.stage_used, self.t = self.stage, 0
@@ -69,10 +82,14 @@ class ApproachEnv(FPVTrainEnv):
         d = float(np.clip(rng.normal(d_mean, s), d_mean - 2 * s, d_mean + 2 * s))
         z = float(rng.uniform(z_lo, z_hi))
         lim = ap["ground_half_m"] - 10.
-        for _ in range(100):                                   # reste au-dessus du sol (500 x 500 m)
+        hard = rng.random() < ap.get("hard_frac", 0.)          # départ difficile : un prop près de la trajectoire
+        props = self._scene_props() if hard else None
+        for _ in range(300 if hard else 100):                  # reste au-dessus du sol (500 x 500 m)
             th = rng.uniform(-np.pi, np.pi)                    # direction drone -> cible
             xy = self.target_xy - d * np.array([np.cos(th), np.sin(th)])
-            if np.abs(xy).max() <= lim:
+            if np.abs(xy).max() > lim:
+                continue
+            if not hard or not len(props) or _seg_dist(props, xy, self.target_xy).min() < ap.get("hard_dist_m", 3.):
                 break
         psi = rng.uniform(-psi_max, psi_max)
         yaw = th + np.radians(psi)
@@ -114,6 +131,37 @@ class ApproachEnv(FPVTrainEnv):
         est.zx[1] = est.vel[2]
         est.rp_model = np.array([est.roll, est.pitch])
 
+    def _proximity(self, rng_m):
+        """max(0, 1 - dist / rng_m) au prop le plus proche (arbres, rochers... ; ni sol, ni boîte). Vérité
+        terrain : sert uniquement à la reward. Seuls les props à moins de rng_m + 15 m (centre) sont testés."""
+        sim = self.sim
+        if self._obstacles is None:
+            ids = [b for b in sim.TERRAIN_IDS[1:] if self._is_urdf(b)]
+            xy = np.array([p.getBasePositionAndOrientation(b, physicsClientId=sim.CLIENT)[0][:2] for b in ids]) \
+                if ids else np.zeros((0, 2))
+            self._obstacles = (ids, xy)
+        ids, xy = self._obstacles
+        if not len(ids):
+            return 0.
+        near = np.nonzero(np.linalg.norm(xy - sim.pos[0, :2], axis=1) < rng_m + 15.)[0]
+        dmin = rng_m
+        for k in near:
+            for c in p.getClosestPoints(sim.DRONE_IDS[0], ids[k], rng_m, physicsClientId=sim.CLIENT):
+                dmin = min(dmin, max(c[8], 0.))
+        return 1. - dmin / rng_m
+
+    def _scene_props(self):
+        """xy des props (objets urdf) de la scène courante, lus dans son JSON."""
+        scene = self.terrain.split("@")[0]
+        if scene not in self._props:
+            objs = json.loads((TERRAINS_DIR / f"{scene}.json").read_text())["objects"]
+            self._props[scene] = np.array([o["position_m"][:2] for o in objs if o["type"] == "urdf"]).reshape(-1, 2)
+        return self._props[scene]
+
+    def _is_urdf(self, body):
+        """Props chargés par loadURDF : lien de base "base_link" ; surfaces (createMultiBody) : "link0"."""
+        return p.getBodyInfo(body, physicsClientId=self.sim.CLIENT)[0] != b"link0"
+
     # ------------------------------------------------------------ observation
     def _expected(self):
         """Position attendue de la cible, repère drone horizontal : (dz_rel, bearing, elev)."""
@@ -129,7 +177,11 @@ class ApproachEnv(FPVTrainEnv):
 
     def _obs(self, x):
         vec = np.concatenate([x["vec"], self._expected()]).astype(np.float32)
-        return {"depth": x["depth"], "vec": np.nan_to_num(vec, nan=0., posinf=3., neginf=-3.)}
+        depth = np.clip(np.nan_to_num(x["depth"], nan=1., posinf=1., neginf=0.), 0., 1.)   # état physique explosé
+        out = {"depth": depth.astype(np.float32), "vec": np.nan_to_num(vec, nan=0., posinf=3., neginf=-3.)}
+        if self.use_local:
+            out["local"] = np.clip(np.nan_to_num(x["local"], nan=0.), 0., 1.).astype(np.float32)
+        return out
 
     # ------------------------------------------------------------ gym API
     def reset(self, seed=None, options=None):
@@ -169,6 +221,8 @@ class ApproachEnv(FPVTrainEnv):
         self.last_a = hold
         self.lost_steps = 0
         self.d_prev = self.d0 = self.sim._distance()
+        self._obstacles = None                         # (ids, xy) des props, calculés au 1er besoin (proximity)
+        self.prox_sum = 0.
         return self._obs(x), {"terrain": self.terrain, "stage": self.stage_used}
 
     def step(self, action):
@@ -180,19 +234,23 @@ class ApproachEnv(FPVTrainEnv):
 
         det = bool(obs["detected"])
         self.lost_steps += not det
-        d = info["distance_m"]
+        d = info["distance_m"] if np.isfinite(info["distance_m"]) else self.d_prev
         r = rw["progress"] * (self.d_prev - d) + rw["detect"] * det - rw["lost"] * (not det) - rw["time"] \
             - rw["smooth"] * float(np.sum((a - self.last_a) ** 2))
         if det:
             box = np.asarray(obs["box"])
             r -= rw["center"] * float(np.hypot((box[0] + box[2]) / 2 - .5, (box[1] + box[3]) / 2 - .5))
+        if rw.get("proximity", 0.) > 0:
+            pen = rw["proximity"] * self._proximity(rw.get("proximity_range_m", 2.5))
+            r -= pen
+            self.prox_sum += pen
         self.d_prev, self.last_a = d, a
 
         outcome = None
         if info["is_success"]:
             outcome = "success"
             r += rw["success"] + rw["success_speed"] * max(0., 1. - self.t / self.timeout_steps)
-        elif info["collision"]:
+        elif info["collision"] or not np.isfinite(self.sim.pos).all():   # PyBullet diverge (drone dans un arbre)
             outcome = "collision"
         elif np.abs(self.sim.pos[0, :2]).max() >= ARENA:
             outcome = "out_of_arena"

@@ -1,0 +1,49 @@
+# Explorateur + approche à reach_m (train/explore_env.py, ExploreReachEnv). À reprendre depuis un explorateur :
+#   RESUME=runs/femur_explorer.zip train/launch.sh metacarpe explore_reach10 train/config_explore_reach.toml
+
+[run]
+task = "explore"                   # "approach" (train/env_wrapper.py) ou "explore"
+envs = 24
+seed = 0
+out_dir = "/tmp/fpv_runs"
+total_steps = 100_000_000
+save_every_steps = 1_000_000
+
+[terrains]
+scenes = ["field", "forest", "village", "city"]
+holdout_field = [15, 16, 17, 18]
+holdout_others = [31, 32, 33, 34, 35, 36, 37, 38, 39, 40]
+
+[explore]
+zone_half_m = 200.0                # zone de couverture |x|, |y| <= 200 m (toutes les cibles connues y sont)
+alpha = 0.8                        # comme femur (explore_alpha08), le meilleur explorateur
+far_k = 10.0                       # saturation des rayons lointains : 1 - exp(-n / far_k), comme le canal glob
+w_cov = 0.2                        # par 1000 m² nouvellement couverts (zone de 160 000 m² -> <= 32 au total)
+detect_bonus = 10.0                # à la première détection (le vrai objectif est maintenant d'arriver à reach_m)
+end_on_detect = false              # obligatoire ici : on continue après la détection
+coverage_goal = 0.0                # > 0 : fin aussi quand la couverture dépasse cette fraction de la zone
+timeout_s = 120                    # comme l'évaluation officielle
+time = 0.002                       # pénalité par pas
+smooth = 0.01                      # x |action - action précédente|^2
+# pénalités / bonus de fin d'épisode (clé = issue)
+collision = -30.0
+out_of_arena = -30.0
+timeout = -5.0
+success = 50.0                     # arrivé à reach_m de la boîte (+ success_speed * (1 - t / timeout))
+success_speed = 30.0
+reach_m = 10.0                     # distance à la surface de la boîte pour réussir (curriculum : 10 -> 5 -> contact)
+progress = 0.5                     # par mètre gagné vers la boîte, après la 1re détection
+cov_after_detect = true            # false : plus de reward de couverture une fois la cible vue (il faut foncer)
+coverage_done = 10.0
+
+[ppo]
+lr = 3e-4
+n_steps = 256
+batch_size = 2048
+n_epochs = 5
+gamma = 0.995
+gae_lambda = 0.95
+ent_coef = 0.005
+clip_range = 0.2
+max_grad_norm = 0.5
+log_std_init = -1.0

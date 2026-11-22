@@ -15,7 +15,7 @@ from train.sb3_policy import export_policy  # noqa: F401
 class SB3ApproachExtractor(BaseFeaturesExtractor):
     def __init__(self, observation_space: spaces.Dict):
         super().__init__(observation_space, features_dim=FEATURES_DIM)
-        self.net = ApproachNet(observation_space["vec"].shape[0])
+        self.net = ApproachNet(observation_space["vec"].shape[0], use_local="local" in observation_space.spaces)
 
     def forward(self, observations):
         return self.net(observations)
