@@ -62,8 +62,9 @@ def test_rise_stops_when_blocked_above():
     sm = make()
     c = sm.cfg
     out = None
+    # z above dive_end_alt_m: a roof-blocked rise transitions to "dive" instead of the dive's low-alt end
     for _ in range(int((1.5 + c.stall_s) / DT) + 5):               # not climbing (roof / canopy)
-        out = sm.step(est([200., 0., 12.], yaw=np.pi))
+        out = sm.step(est([200., 0., 30.], yaw=np.pi))
     assert out is not None and out[0] == "dive"
 
 

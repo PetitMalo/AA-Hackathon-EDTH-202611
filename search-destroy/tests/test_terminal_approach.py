@@ -44,14 +44,17 @@ def test_obstacle_count_ignores_ground_and_box():
 
 
 def test_margin_shrinks_mpc_boxes():
+    # goal just before the wall (x<20) so the corridor *reaches* it: only then is the per-step `margin`
+    # honoured; a blocked corridor clamps margin to cfg.margin_m (CorridorPlanner.step), masking the effect.
     m = free_map()
     set_occupied(m, [20., -50., 0.], [22., 50., 40.])
+    goal = np.array([19.5, 0., 10.])
     stops = {}
     for margin in (0.8, 0.2):
         planner = CorridorPlanner(CorridorConfig(), MPCConfig())
         p, v = np.array([0., 0., 10.]), np.array([6., 0., 0.])
         for _ in range(300):
-            a = planner.step(m, p, v, np.array([40., 0., 10.]), 8., 8., margin=margin)
+            a = planner.step(m, p, v, goal, 8., 8., margin=margin)
             p, v = p + v * 1. / 30. + 0.5 * a / 900., v + a / 30.
         stops[margin] = p[0]
     assert stops[0.8] < 20. - 0.7 and stops[0.2] < 20. - 0.1
