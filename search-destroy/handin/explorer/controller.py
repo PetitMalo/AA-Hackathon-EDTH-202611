@@ -64,8 +64,10 @@ class WaypointController:
         yaw_err = wrap(des_yaw - yaw)
         return -self.cfg.yaw_gain * yaw_err, yaw_err
 
-    def accel_to_sticks(self, a, v, yaw, yaw_stick, tilt_deg=None):
-        """Desired world acceleration (without drag) -> (roll, pitch, yaw, throttle) sticks, drag fed forward."""
+    def accel_to_sticks(self, a, v, yaw, yaw_stick, tilt_deg=None, pitch_min=None):
+        """Desired world acceleration (without drag) -> (roll, pitch, yaw, throttle) sticks, drag fed forward.
+        pitch_min (rad, nose down > 0): floor on the pitch (target pursuit: keeps the box inside the image,
+        the camera being tilted up); the collective is recomputed so the vertical acceleration is kept."""
         c = self.cfg
         a = np.array(a, dtype=float)
         a[:2] = a[:2] + self.drag_k * np.linalg.norm(v) * v[:2]
@@ -75,10 +77,18 @@ class WaypointController:
         a_fwd = cy * a[0] + sy * a[1]
         a_left = -sy * a[0] + cy * a[1]
         a_up = max(self.g + a[2], 0.3 * self.g)
-        thrust = np.sqrt(a_fwd ** 2 + a_left ** 2 + a_up ** 2)
         max_tilt = np.radians(c.max_tilt_deg if tilt_deg is None else tilt_deg)
+        # Joint tilt limit: the total tilt of the thrust vector is atan(|a_h| / a_up). Past max_tilt, scale
+        # the horizontal acceleration down ALONG ITS DIRECTION (clipping roll and pitch one by one would
+        # bend it, e.g. a braking turn would lose its braking share, and allow up to ~60 deg in total).
+        a_h, a_h_max = np.hypot(a_fwd, a_left), a_up * np.tan(max_tilt)
+        if a_h > a_h_max:
+            a_fwd, a_left = a_fwd * a_h_max / a_h, a_left * a_h_max / a_h
+        thrust = np.sqrt(a_fwd ** 2 + a_left ** 2 + a_up ** 2)
         pitch = np.clip(np.arctan2(a_fwd, a_up), -max_tilt, max_tilt)
         roll = np.clip(-np.arcsin(np.clip(a_left / thrust, -1, 1)), -max_tilt, max_tilt)
+        if pitch_min is not None:
+            pitch = max(pitch, min(pitch_min, max_tilt))
         throttle = a_up / (np.cos(pitch) * np.cos(roll)) / self.g - 1.
 
         full = np.radians(c.max_stick_deg)

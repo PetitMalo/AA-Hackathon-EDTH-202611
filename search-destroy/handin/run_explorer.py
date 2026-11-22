@@ -53,7 +53,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--terrain", default="field@v1")
     ap.add_argument("--seed", type=int, default=0)
-    ap.add_argument("--time", type=float, default=60.)
+    ap.add_argument("--time", type=float, default=120.)
     ap.add_argument("--out", default="out/explorer_map.png")
     args = ap.parse_args()
 
@@ -78,7 +78,14 @@ def main():
                 print(f"t={step / 30:5.1f}s mode={ex.mode:8s} pos_est={np.round(ex.position, 1)} "
                       f"pos_true={np.round(env.pos[0], 1)} goal={goal} frontiers={ex.n_frontiers} "
                       f"obst={ex.obstacle_ahead} boxes={ex.n_boxes}{'(blk)' if ex.corridor_blocked else ''} "
-                      f"mpc={ex.mpc_ms:.1f}ms/{ex.mpc_iters}it box_dist={info['distance_m']:.1f} act={np.round(action, 2)}")
+                      f"mpc={ex.mpc_ms:.1f}ms/{ex.mpc_iters}it vmax={ex.vmax:.1f} clutter={ex.n_clutter} "
+                      f"margin={ex.margin:.2f} path={ex.path_len:.0f}m geo={ex.geo_ms:.1f}ms unreach={ex.n_unreachable} "
+                      f"sw/min={ex.switches_min:.0f} uturns={ex.n_uturns} disp8s={ex.stuck_disp:.1f} esc={ex.n_escapes}"
+                      f"{'(' + ex.escape_level + '/' + ex.stuck_reason + ')' if ex.n_escapes else ''} "
+                      f"sight={ex.delta_deg:.1f}deg lost={ex.lost_s:.1f}s floor={int(ex.floor_on)} reacq={int(ex.reacquire)} "
+                      f"obst={ex.obstacle_pts} strikes={ex.n_strikes}"
+                      f"{'(' + ex.strike_abort + ')' if ex.strike_abort else ''} "
+                      f"box_dist={info['distance_m']:.1f} act={np.round(action, 2)}")
             if terminated or truncated:
                 outcome = "success" if info["is_success"] else "collision" if info["collision"] else "terminated"
                 break

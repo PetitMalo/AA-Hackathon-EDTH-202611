@@ -7,8 +7,15 @@ candidate frontiers and a context, and returns one goal. Two policies:
 - GainCostFrontierPolicy: information gain (weighted by a prior on the target position)
   x exp(-lambda * distance) x heading term, on clustered frontiers, with hysteresis.
 
+Distance: geodesic (shortest flyable path, geodesic.py) when the context provides a field
+(context["geodesic"]: GeodesicField or a callable returning one / None): frontiers it cannot reach
+are dropped, and the heading term uses the direction of the path's first metres. Euclidean otherwise,
+or when no candidate is reachable.
+
 `FrontierManager` keeps the committed goal, decides when to re-plan, tells the policy why
 (`context["replan_reason"]`) and blacklists goals abandoned on commit timeout (unreachable).
+The escape logic (progress.py) can also force a re-plan with its own wider blacklist, and widen
+the altitude band of the candidates for a while.
 """
 
 import numpy as np
@@ -28,6 +35,25 @@ class FrontierPolicy:
         pass
 
 
+def geodesic_field(context):
+    """The context's GeodesicField (computed lazily if it is a callable), or None."""
+    g = context.get("geodesic")
+    g = g() if callable(g) else g
+    return g if g is not None and g.ok else None
+
+
+def path_distances(frontiers, context):
+    """(distances, field): geodesic when available and at least one frontier is reachable, else Euclidean
+    (field None). Unreachable frontiers get inf."""
+    p = np.asarray(context["position"], float)
+    field = geodesic_field(context)
+    if field is not None and len(frontiers):
+        d = field.distance(frontiers)
+        if np.isfinite(d).any():
+            return d, field
+    return np.linalg.norm(np.asarray(frontiers, float) - p, axis=1), None
+
+
 class NearestFrontierPolicy(FrontierPolicy):
     def __init__(self, min_dist_m=8., center_weight=0.):
         self.min_dist = min_dist_m
@@ -37,8 +63,11 @@ class NearestFrontierPolicy(FrontierPolicy):
         if len(frontiers) == 0:
             return None
         p = context["position"]
-        d = np.linalg.norm(frontiers - p, axis=1)
-        ok = d >= self.min_dist
+        ok = np.linalg.norm(frontiers - p, axis=1) >= self.min_dist
+        if not ok.any():
+            return None
+        d, _ = path_distances(frontiers, context)
+        ok &= np.isfinite(d)
         if not ok.any():
             return None
         cost = d + self.center_weight * np.linalg.norm(frontiers[:, :2], axis=1)
@@ -94,12 +123,16 @@ class GainCostFrontierPolicy(FrontierPolicy):
         self.heading_w = cfg.heading_w              # U-turn penalty (0 = off)
         self.hysteresis = cfg.hysteresis            # switch only if +25 % better
         self.prior_sigma = cfg.prior_sigma_m        # width of the prior around the centre (m)
+        self.ground_full = cfg.ground_full_m        # gain weight 1 below this altitude, 0 at the sky ceiling
+        self.continuity_w, self.continuity_m = cfg.continuity_w, cfg.continuity_m
         self.ray_dirs = fibonacci_sphere(cfg.n_rays)
         self.reset()
 
     def reset(self):
         self.prev_goal = None
         self.last_scores = None                     # (candidates, utilities) of the last call, for debugging
+        self.n_unreachable = 0                      # candidates dropped at the last call (no flyable path)
+        self.geodesic_used = False
 
     # ---------- entry point ----------
     def select(self, frontiers, context):
@@ -122,24 +155,35 @@ class GainCostFrontierPolicy(FrontierPolicy):
             return None
         cands, sizes = np.array(cands), np.array(sizes, float)
 
+        # Path length to each candidate (geodesic if possible): unreachable ones are dropped
+        dists, field = path_distances(cands, context)
+        reach = np.isfinite(dists)
+        self.n_unreachable, self.geodesic_used = int((~reach).sum()), field is not None
+        cands, sizes, dists = cands[reach], sizes[reach], dists[reach]
+
         # Bound the ray-casting cost: keep the best clusters by size x distance discount
         if len(cands) > self.max_candidates:
-            pre = sizes * np.exp(-self.lam * np.linalg.norm(cands - p, axis=1))
+            pre = sizes * np.exp(-self.lam * dists)
             keep = np.argsort(-pre)[:self.max_candidates]
-            cands = cands[keep]
+            cands, dists = cands[keep], dists[keep]
 
         # 3. Score every candidate
-        scores = np.array([self.utility(g, p, context, vmap) for g in cands])
+        scores = np.array([self.utility(g, p, context, vmap, d, field) for g, d in zip(cands, dists)])
+        # Goal just explored: keep going in the same area rather than swinging to the other side
+        if context.get("replan_reason") == "explored" and self.prev_goal is not None and self.continuity_w > 0:
+            near = np.exp(-np.linalg.norm(cands - self.prev_goal, axis=1) / self.continuity_m)
+            scores = scores * (1. + self.continuity_w * near)
         best = int(np.argmax(scores))
         goal, u_best = cands[best], scores[best]
         self.last_scores = (cands, scores)
 
         # 4. Hysteresis: keep the previous goal if still valid, still far enough, not abandoned, and almost as good
         prev = self.prev_goal
-        if (prev is not None and context.get("replan_reason") not in ("timeout", "reached")
+        if (prev is not None and context.get("replan_reason") not in ("timeout", "reached", "escape")
                 and np.linalg.norm(prev - p) >= self.min_dist and is_still_frontier(vmap, prev)
                 and not context.get("is_blacklisted", lambda g: False)(prev)):
-            u_prev = self.utility(prev, p, context, vmap)
+            d_prev = path_distances(prev[None], context)[0][0] if field is None else field.distance(prev[None])[0]
+            u_prev = self.utility(prev, p, context, vmap, d_prev, field) if np.isfinite(d_prev) else 0.
             if u_best < (1 + self.hysteresis) * u_prev:
                 goal = prev
 
@@ -147,22 +191,26 @@ class GainCostFrontierPolicy(FrontierPolicy):
         return goal
 
     # ---------- utility ----------
-    def utility(self, g, p, context, vmap):
+    def utility(self, g, p, context, vmap, d=None, field=None):
+        """d: path length to g (default Euclidean); field: GeodesicField whose path gives the heading term."""
         gain = self.gain(g, vmap)                           # what would be seen from g
-        d = np.linalg.norm(g - p)                           # v1: Euclidean (v2: Dijkstra)
+        d = np.linalg.norm(g - p) if d is None else d
         u = gain * np.exp(-self.lam * d)
-        # U-turn penalty: favours goals along the motion / the heading
+        # U-turn penalty: favours goals along the motion / the heading (direction of the path's first metres)
         v = np.asarray(context["velocity"], float)
         fwd = unit(v) if np.linalg.norm(v) > 0.3 else np.array([np.cos(context["yaw"]), np.sin(context["yaw"]), 0.])
-        cos_a = float(np.dot(unit(g - p), fwd))             # 1 = ahead, -1 = behind
+        look = context.get("heading_look_m", 12.)
+        to_g = field.first_direction(g, look) if field is not None else unit(g - p)
+        cos_a = float(np.dot(to_g, fwd))                    # 1 = ahead, -1 = behind
         return u * (1 - self.heading_w * (1 - cos_a) / 2)
 
     # ---------- information gain by ray casting ----------
     def gain(self, g, vmap):
-        """Sum of the prior over the UNKNOWN voxels visible from g (occlusions included).
+        """Sum of prior x altitude weight over the UNKNOWN voxels visible from g (occlusions included).
 
         All rays at once: samples every half voxel, a ray stops at its first occupied voxel
-        or when it leaves the grid; each unknown voxel counts once.
+        or when it leaves the grid; each unknown voxel counts once. Voxels at or above the sky
+        ceiling count for nothing (the target is on the ground).
         """
         res = vmap.res
         steps = np.arange(1, int(self.max_range / (res / 2)) + 1) * (res / 2)
@@ -179,7 +227,16 @@ class GainCostFrontierPolicy(FrontierPolicy):
         if not seen.any():
             return 0.
         flat = np.unique(np.ravel_multi_index((t[0][seen], t[1][seen], t[2][seen]), vmap.shape))
-        return float(self.prior(np.stack(np.unravel_index(flat, vmap.shape), axis=1), vmap).sum())
+        idx = np.stack(np.unravel_index(flat, vmap.shape), axis=1)
+        return float((self.prior(idx, vmap) * self.altitude_weight(idx, vmap)).sum())
+
+    def altitude_weight(self, idx, vmap):
+        """1 below ground_full_m (where the box can be), linearly down to 0 at the sky ceiling."""
+        ceiling = getattr(vmap.cfg, "sky_ceiling_m", np.inf)
+        z = vmap.index_to_world(idx)[:, 2]
+        if not np.isfinite(ceiling):
+            return np.ones(len(z))
+        return np.clip((ceiling - z) / max(ceiling - self.ground_full, 1e-6), 0., 1.)
 
     def prior(self, idx, vmap):
         """Prior on the target position: Gaussian around the arena centre. Summed over UNKNOWN voxels only,
@@ -211,38 +268,81 @@ class FrontierManager:
         self.frame = 0
         self.n_candidates = 0
         self.time_s = 0.
-        self.blacklist = []                              # (point, expiry time)
+        self.blacklist = []                              # (point, expiry time, radius)
         self.last_reason = None
+        self.switch_times = []                           # times of the goal switches (last 60 s)
+        self.n_switches = self.n_uturns = 0
+        self._forced = False                             # force_replan: re-plan on the next update
+        self._z_band, self._z_band_until = None, -np.inf  # widen_z_band: temporary altitude band
         self.policy.reset()
 
     def is_blacklisted(self, g):
-        r = self.cfg.blacklist_radius_m
-        return any(np.linalg.norm(g - b) < r for b, _ in self.blacklist)
+        return any(np.linalg.norm(g - b) < r for b, _, r in self.blacklist)
+
+    @property
+    def z_band(self):
+        """Altitude band of the frontier candidates (cfg.z_band_m, unless widened for a while)."""
+        return self._z_band if self.time_s < self._z_band_until else self.cfg.z_band_m
+
+    def widen_z_band(self, band, duration_s):
+        self._z_band, self._z_band_until = tuple(band), self.time_s + duration_s
+
+    def force_replan(self, blacklist_points=(), radius_m=None, duration_s=None):
+        """Re-plan on the next update (reason 'escape'), excluding every frontier within radius_m of
+        each blacklist point for duration_s (defaults: cfg.blacklist_radius_m / cfg.blacklist_s)."""
+        r = self.cfg.blacklist_radius_m if radius_m is None else radius_m
+        t = self.time_s + (self.cfg.blacklist_s if duration_s is None else duration_s)
+        for b in blacklist_points:
+            if b is not None:
+                self.blacklist.append((np.asarray(b, float).copy(), t, r))
+        self._forced = True
 
     def update(self, voxel_map, context):
         self.frame += 1
         self.goal_age_s += self.dt
         self.time_s += self.dt
-        self.blacklist = [(b, t) for b, t in self.blacklist if t > self.time_s]
+        self.blacklist = [e for e in self.blacklist if e[1] > self.time_s]
         reason = self._replan_reason(voxel_map, context["position"])
         if reason is not None:
             if reason == "timeout":                      # committed for commit_s without reaching it: unreachable
-                self.blacklist.append((self.goal.copy(), self.time_s + self.cfg.blacklist_s))
-            cands = voxel_map.frontier_points(self.cfg.z_band_m, self.cfg.xy_limit_m)
+                self.blacklist.append((self.goal.copy(), self.time_s + self.cfg.blacklist_s,
+                                       self.cfg.blacklist_radius_m))
+            cands = voxel_map.frontier_points(self.z_band, self.cfg.xy_limit_m)
             if self.blacklist and len(cands):
-                bl = np.array([b for b, _ in self.blacklist])
-                d = np.linalg.norm(cands[:, None, :] - bl[None, :, :], axis=2).min(1)
-                cands = cands[d >= self.cfg.blacklist_radius_m]
+                bl = np.array([b for b, _, _ in self.blacklist])
+                radii = np.array([r for _, _, r in self.blacklist])
+                d = np.linalg.norm(cands[:, None, :] - bl[None, :, :], axis=2)
+                cands = cands[np.all(d >= radii[None, :], axis=1)]
             self.n_candidates = len(cands)
             ctx = dict(context, replan_reason=reason, is_blacklisted=self.is_blacklisted)
             new_goal = self.policy.select(cands, ctx)
             if new_goal is None or self.goal is None or np.linalg.norm(new_goal - self.goal) > 1e-6:
                 self.goal_age_s = 0.                     # commit timer restarts only on a new goal
+                self._count_switch(self.goal, new_goal, np.asarray(context["position"], float))
             self.goal = new_goal
             self.last_reason = reason
         return self.goal
 
+    def _count_switch(self, old, new, p):
+        """Stats: goal switches (per minute) and U-turns (new goal > uturn_deg round from the old one)."""
+        if old is None or new is None:
+            return
+        self.n_switches += 1
+        self.switch_times = [t for t in self.switch_times if t > self.time_s - 60.] + [self.time_s]
+        a, b = (old - p)[:2], (new - p)[:2]
+        na, nb = np.linalg.norm(a), np.linalg.norm(b)
+        if na > 1e-6 and nb > 1e-6 and np.dot(a, b) / (na * nb) < np.cos(np.radians(self.cfg.uturn_deg)):
+            self.n_uturns += 1
+
+    @property
+    def switches_per_min(self):
+        recent = [t for t in self.switch_times if t > self.time_s - 60.]
+        return len(recent) * 60. / max(min(self.time_s, 60.), 1.)
+
     def _replan_reason(self, voxel_map, position):
+        if self._forced:
+            self._forced = False
+            return "escape"
         if self.goal is None:
             return "none"
         if np.linalg.norm(self.goal - position) < self.cfg.reach_dist_m:
@@ -253,6 +353,6 @@ class FrontierManager:
             idx, valid = voxel_map.world_to_index(self.goal[None])
             if not valid[0] or not voxel_map.frontier[tuple(idx[0])]:
                 return "explored"                        # the goal got explored (or became occupied)
-            if self.policy.reevaluate_periodically:
-                return "periodic"
+        if self.policy.reevaluate_periodically and self.frame % self.cfg.periodic_every == 0:
+            return "periodic"
         return None

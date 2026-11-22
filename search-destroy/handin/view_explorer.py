@@ -1,8 +1,9 @@
 """Live viewer of the explorer: onboard FPV view (left) and the voxel map seen from above (right).
 
     uv run python -m handin.view_explorer --terrain village@v1 --seed 0
+    uv run python -m handin.view_explorer --terrain city@v12 --eval-run 0   # replays run 0 of `evaluate` on city@v12
 
-Keys: SPACE pause, N next flight (new seed), F fast mode (no 30 FPS limit), ESC / close to quit.
+Keys: SPACE pause, N next flight (new seed, or next eval run), F fast mode (no 30 FPS limit), ESC / close to quit.
 The true pose and box position are only drawn for debugging, never given to the agent.
 """
 
@@ -20,15 +21,19 @@ from handin.run_explorer import map_rgb
 
 FPV_SIZE = (640, 360)
 MAP_PX = 600
-MODE_COLOURS = {"init": "gray", "explore": "deepskyblue", "target": "orange", "attack": "red", "hover": "yellow"}
+MODE_COLOURS = {"init": "gray", "explore": "deepskyblue", "target": "orange", "attack": "red", "hover": "yellow",
+                "scan": "violet", "climb": "springgreen", "strike": "orangered", "brake": "hotpink",
+                "rise": "lightgreen",
+                "dive": "cyan"}
 
 
 class Viewer:
-    def __init__(self, terrain, seed, timeout_s):
+    def __init__(self, terrain, seed, timeout_s, eval_run=None):
         self.env = ApproachAviary(terrain=terrain)
         self.agent = Agent()
         self.fpv_cam = Camera(self.env.CLIENT, width=480, height=270)
         self.terrain, self.seed, self.timeout_s = terrain, seed, timeout_s
+        self.eval_run = eval_run           # None: free seed; int: same start as fpv_sim.scripts.evaluate's run
         pygame.init()
         self.screen = pygame.display.set_mode((FPV_SIZE[0] + MAP_PX, MAP_PX))
         self.font = pygame.font.Font(None, 26)
@@ -36,13 +41,19 @@ class Viewer:
         self.new_flight()
 
     def new_flight(self):
-        self.obs, _ = mission_start(self.env, np.random.default_rng(self.seed), self.terrain)
+        self.env.reset(seed=self.seed)
+        if self.eval_run is None:
+            rng, label = np.random.default_rng(self.seed), f"seed {self.seed}"
+        else:                              # the exact rng of evaluate.run_target: same start, same sensor noise
+            rng = np.random.default_rng([self.seed, sum(map(ord, self.terrain)), self.eval_run])
+            label = f"eval run {self.eval_run} (--seed {self.seed})"
+        self.obs, _ = random_start(self.env, rng)
         self.agent.reset()
         self.step, self.outcome = 0, None
         self.true_track, self.est_track = [], []
         self.box_xy = np.array(p.getBasePositionAndOrientation(self.env.TERRAIN_IDS[0],
                                                                physicsClientId=self.env.CLIENT)[0][:2])
-        pygame.display.set_caption(f"Explorer — {self.terrain} seed {self.seed}")
+        pygame.display.set_caption(f"Explorer — {self.terrain} {label}")
 
     def advance(self):
         action = self.agent.act(self.obs)
@@ -91,7 +102,10 @@ class Viewer:
             head = ex.position[:2] + 12 * np.array([np.cos(ex.yaw), np.sin(ex.yaw)])
             pygame.draw.line(s, "yellow", pos, self.world_to_map(head), 2)
             if ex.goal is not None:
-                pygame.draw.line(s, "magenta", pos, self.world_to_map(ex.goal), 1)
+                if ex.path is not None and len(ex.path) >= 2:    # geodesic path the corridor follows
+                    pygame.draw.lines(s, "magenta", False, [self.world_to_map(q) for q in ex.path], 2)
+                else:
+                    pygame.draw.line(s, "magenta", pos, self.world_to_map(ex.goal), 1)
                 pygame.draw.circle(s, "magenta", self.world_to_map(ex.goal), 5)
         if ex.target_estimate is not None:
             pygame.draw.circle(s, "orange", self.world_to_map(ex.target_estimate), 3)
@@ -104,13 +118,20 @@ class Viewer:
              if hasattr(self, "info") else "", "white"),
             (f"frontiers {ex.n_frontiers}    coverage {100 * ex.coverage:4.1f} %    obstacle ahead {ex.obstacle_ahead}",
              "white"),
-            (f"goal {None if ex.goal is None else np.round(ex.goal, 1)}", "magenta"),
-            (f"sticks r/p/y/t {np.round(ex.action, 2)}", "white"),
+            (f"goal {None if ex.goal is None else np.round(ex.goal, 1)}    path {ex.path_len:5.1f} m    "
+             f"unreachable {ex.n_unreachable}    geo {ex.geo_ms:4.1f} ms", "magenta"),
+            (f"goal switches {ex.switches_min:4.0f}/min    U-turns {ex.n_uturns}    "
+             f"8 s displacement {ex.stuck_disp:5.1f} m    escapes {ex.n_escapes}"
+             + (f" (last: {ex.escape_level}, {ex.stuck_reason})" if ex.n_escapes else ""), "violet"),
+            (f"sticks r/p/y/t {np.round(ex.action, 2)}    sight {ex.delta_deg:5.1f} deg below    "
+             f"lost {ex.lost_s:4.1f} s    floor {'on' if ex.floor_on else 'off'}"
+             f"{'    REACQUIRE' if ex.reacquire else ''}    strikes {ex.n_strikes}"
+             + (f" (last abort: {ex.strike_abort})" if ex.strike_abort else ""), "white"),
             ("map: red true track, yellow estimate, magenta goal, blue frontiers, green obstacles", "gray"),
             ("SPACE pause   N next flight   F fast   ESC quit" + ("   [FAST]" if self.fast else ""), "gray"),
         ]
         for k, (txt, col) in enumerate(lines):
-            s.blit(self.font.render(txt, True, col), (10, FPV_SIZE[1] + 10 + 30 * k))
+            s.blit(self.font.render(txt, True, col), (10, FPV_SIZE[1] + 10 + 26 * k))
         if self.outcome:
             s.blit(pygame.font.Font(None, 64).render(self.outcome, True, "white", "black"), (20, 20))
         if self.paused and not self.outcome:
@@ -131,7 +152,10 @@ class Viewer:
                         elif event.key == pygame.K_f:
                             self.fast = not self.fast
                         elif event.key == pygame.K_n:
-                            self.seed += 1
+                            if self.eval_run is None:
+                                self.seed += 1
+                            else:
+                                self.eval_run += 1
                             self.new_flight()
                 if not self.paused and not self.outcome:
                     self.advance()
@@ -148,8 +172,11 @@ def main():
     ap.add_argument("--terrain", default="field@v1")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--timeout", type=float, default=120.)
+    ap.add_argument("--eval-run", type=int, default=None,
+                    help="replay this run of fpv_sim.scripts.evaluate (the `run` column of flights.csv; "
+                         "--seed is then evaluate's --seed)")
     args = ap.parse_args()
-    Viewer(args.terrain, args.seed, args.timeout).run()
+    Viewer(args.terrain, args.seed, args.timeout, args.eval_run).run()
 
 
 if __name__ == "__main__":

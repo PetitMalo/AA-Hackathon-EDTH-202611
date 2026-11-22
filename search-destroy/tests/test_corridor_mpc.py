@@ -60,12 +60,15 @@ def test_unknown_is_forbidden_and_chain_overlaps():
 
 def test_target_clearing_opens_the_goal():
     m = free_map()
-    # final glide onto a box on the ground (the explorer's glide slope keeps the path above the ground
-    # layer until ~3 m from the target, i.e. inside the cleared sphere)
+    # last metre of the "target" guidance: right over the box, straight down onto its top. Only the box's
+    # own voxels (clear_idx) are freed in the occupied ground layer.
     goal = np.array([5., 0., 1.])
+    start = np.array([4.5, .5, 4.])
     cfg = CorridorConfig()
-    assert not build_corridor(m, [0., 0., 3.], goal, cfg).reached       # goal inside the occupied ground layer
-    assert build_corridor(m, [0., 0., 3.], goal, cfg, clear_center=goal).reached
+    box_idx = m.world_to_index(goal[None])[0]
+    assert not build_corridor(m, start, goal, cfg).reached               # goal inside the occupied ground layer
+    assert build_corridor(m, start, goal, cfg, clear_idx=box_idx).reached
+    assert not build_corridor(m, [0., 0., 3.], goal, cfg, clear_idx=box_idx).reached   # ground on the way: blocked
 
 
 def test_mpc_stays_in_box_and_stops_at_the_end():
