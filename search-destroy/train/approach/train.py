@@ -101,11 +101,40 @@ class CheckpointCallback(BaseCallback):
         self._save()
 
 
+def init_from(model, path):
+    """Copie les poids d'un checkpoint dans `model`. Tenseurs de même forme : copiés. Couche de fusion
+    élargie (branche "local" ajoutée) : anciennes colonnes copiées, nouvelles à zéro -> même politique au départ."""
+    old = PPO.load(path, device="cpu").policy.state_dict()
+    new = model.policy.state_dict()
+    copied, widened, skipped = 0, 0, []
+    for k, v in new.items():
+        if k not in old:
+            skipped.append(k)
+            continue
+        o = old[k]
+        if o.shape == v.shape:
+            new[k] = o.clone()
+            copied += 1
+        elif k.endswith("fuse.0.weight") and o.shape[0] == v.shape[0] and o.shape[1] < v.shape[1]:
+            w = torch.zeros_like(v)
+            w[:, :o.shape[1]] = o
+            new[k] = w
+            widened += 1
+        else:
+            skipped.append(k)
+    model.policy.load_state_dict(new)
+    print(f"[init-from] {path} : {copied} tenseurs copiés, {widened} élargis, "
+          f"{len(skipped)} neufs ({sorted({k.split('.')[2] if k.count('.') > 2 else k for k in skipped})})", flush=True)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", default=CONFIG)
     ap.add_argument("--set", nargs="*", default=[], metavar="section.clé=valeur")
     ap.add_argument("--resume", default=None, help="checkpoint .zip à reprendre")
+    ap.add_argument("--init-from", default=None,
+                    help="checkpoint .zip dont on copie les poids dans un modèle neuf (hyperparamètres de la config, "
+                         "observation éventuellement élargie : nouvelles colonnes de fusion à zéro)")
     a = ap.parse_args()
 
     cfg = cfgmod.load(a.config, a.set)
@@ -127,6 +156,7 @@ def main():
                                     start_method="spawn"))
     if a.resume:
         model = PPO.load(a.resume, env=venv, device="auto", tensorboard_log=str(out / "tb"))
+        model.set_random_seed(run["seed"])      # sinon la seed du checkpoint écrase run.seed (répliques identiques)
     else:
         model = PPO(
             "MultiInputPolicy", venv,
@@ -137,6 +167,8 @@ def main():
                                net_arch=dict(pi=list(PI_HIDDEN), vf=list(PI_HIDDEN)),
                                activation_fn=nn.Tanh, log_std_init=ppo["log_std_init"]),
             tensorboard_log=str(out / "tb"), seed=run["seed"], device="auto", verbose=1)
+        if a.init_from:
+            init_from(model, a.init_from)
 
     callbacks = CallbackList([ApproachCurriculumCallback(cfg, stage, out),
                               CheckpointCallback(run["save_every_steps"], out)])

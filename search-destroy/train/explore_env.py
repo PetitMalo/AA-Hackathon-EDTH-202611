@@ -122,6 +122,55 @@ class ExploreEnv(FPVTrainEnv):
 
 def make_explore_env_fn(cfg, terrains, rank):
     """Fabrique pour SubprocVecEnv."""
+    cls = ExploreReachEnv if cfg["explore"].get("reach_m") else ExploreEnv
+
     def _init():
-        return ExploreEnv(cfg, terrains, seed=cfg["run"]["seed"] * 1000 + rank)
+        return cls(cfg, terrains, seed=cfg["run"]["seed"] * 1000 + rank)
     return _init
+
+
+class ExploreReachEnv(ExploreEnv):
+    """Chercher puis s'approcher : succès quand la distance à la surface de la boîte <= reach_m.
+
+    Avant la 1re détection : reward d'ExploreEnv (couverture + detect_bonus), l'épisode continue
+    (mettre explore.end_on_detect = false). Après : + progress par mètre gagné vers la boîte
+    (vraie distance, reward uniquement). Fin : success + success_speed * (1 - t / timeout).
+    Garde-fou : un état non fini (physique divergée) termine l'épisode comme une collision, et
+    l'observation est nettoyée de tout NaN avant d'aller au réseau.
+    """
+
+    def reset(self, seed=None, options=None):
+        x, info = super().reset(seed=seed, options=options)
+        self.d_prev = self.sim._distance()
+        return self._clean(x), info
+
+    @staticmethod
+    def _clean(x):
+        return {k: np.nan_to_num(v, nan=0., posinf=1., neginf=0.) for k, v in x.items()}
+
+    def step(self, action):
+        ex = self.ex
+        seen_before, cov_before = self.ever_seen, self.cov_m2
+        x, r, term, trunc, out = super().step(action)
+        x = self._clean(x)
+        if seen_before and not ex.get("cov_after_detect", True):   # cible vue : plus de reward de couverture, il faut foncer
+            r -= ex["w_cov"] * (self.cov_m2 - cov_before) / 1000.
+        if term or trunc:
+            return x, r, term, trunc, out
+        outcome = None
+        if not np.isfinite(self.sim.pos[0]).all():
+            outcome, r = "collision", r + ex["collision"]
+        else:
+            d = self.sim._distance()
+            if self.ever_seen:
+                r += ex["progress"] * (self.d_prev - d)
+            self.d_prev = d
+            if d <= ex["reach_m"]:
+                outcome = "success"
+                r += ex["success"] + ex["success_speed"] * (1. - self.t / self.timeout_steps)
+        if outcome:
+            out = {"outcome": outcome, "stage": FINAL_STAGE, "terrain": self.terrain, "ep_len": self.t,
+                   "coverage": self.cov_frac, "coverage_m2": self.cov_m2, "detected": self.ever_seen,
+                   "t_detect": self.t_detect}
+            term = True
+        return x, float(r), term, trunc, out

@@ -8,12 +8,13 @@
 #
 # Sorties sur la machine : /tmp/fpv_runs/<nom>/<date>/ (policy.pt, ckpt/, tb/) et log /tmp/fpv_logs/<nom>.log
 # Suivi :  ssh <machine> tail -f /tmp/fpv_logs/<nom>.log
-# Arrêt :  ssh <machine> pkill -INT -f "fpv_runs/<nom>"     (Ctrl-C propre : sauvegarde finale)
+# Arrêt :  ssh <machine> pkill -INT -f "[.]venv/bin/python -m train.run_sigint.*fpv_runs/<nom>( |$)"   (Ctrl-C propre : sauvegarde finale ;
+#          le [.] évite que pkill tue la commande ssh elle-même)
 set -euo pipefail
 host=$1 name=$2 config=$3; shift 3
 repo=$(cd "$(dirname "$0")/.." && pwd)
 sets="run.out_dir=/tmp/fpv_runs/$name $*"
 resume=${RESUME:+--resume $RESUME}             # RESUME=<checkpoint .zip visible de la machine> train/launch.sh ...
 ssh -o BatchMode=yes "$host" "mkdir -p /tmp/fpv_logs && cd '$repo' || exit 1; \
-  setsid nohup .venv/bin/python -m train.train --config '$config' $resume --set $sets \
+  setsid nohup .venv/bin/python -m train.run_sigint --config '$config' $resume --set $sets \
   > /tmp/fpv_logs/$name.log 2>&1 < /dev/null & echo \"[$host] $name lancé, pid \$!\""

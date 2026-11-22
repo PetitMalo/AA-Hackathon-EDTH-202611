@@ -145,6 +145,8 @@ class Features:
             self.prev_depth = depth_net
         out = {"depth": np.stack([depth_net, self.prev_depth]),
                "local": self._local_map(), "glob": self._global_map(), "vec": self._vector(obs)}
+        for k in ("depth", "local", "glob"):     # un NaN (physique/estimateur divergé) ne doit jamais atteindre le réseau
+            out[k] = np.nan_to_num(out[k], nan=0., posinf=1., neginf=0.)
         self.prev_depth = depth_net
         self.t += 1
         return out

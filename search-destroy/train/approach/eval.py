@@ -27,8 +27,8 @@ def _worker(job):
     from train.approach.env import ApproachEnv
 
     torch.set_num_threads(1)
-    config, policy, terrains, stage, episodes = job       # episodes : liste de (seed, setup ou None)
-    cfg = cfgmod.load(config)
+    (config, overrides), policy, terrains, stage, episodes = job       # episodes : liste de (seed, setup ou None)
+    cfg = cfgmod.load(config, overrides)
     cfg["curriculum"]["replay_previous"] = 0.
     env = ApproachEnv(cfg, terrains, stage=stage, seed=episodes[0][0])
     net = load_approach_actor(policy)
@@ -77,49 +77,67 @@ def _report(rows, stages_cfg):
               f"            z haut psi petit {cells[2]} | psi grand {cells[3]}")
 
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--policy", required=True)
-    ap.add_argument("--config", default=None, help="défaut : config.toml du run s'il existe, sinon config_l1.toml")
-    ap.add_argument("--workers", type=int, default=4)
-    ap.add_argument("--repeats", type=int, default=1, help="benchmark : passages par setup")
-    ap.add_argument("--random", action="store_true", help="départs tirés au lieu du benchmark")
-    ap.add_argument("--episodes", type=int, default=10, help="--random : épisodes par étape et par worker")
-    ap.add_argument("--stages", type=int, nargs="*", default=None, help="limiter à ces étapes")
-    a = ap.parse_args()
+def _run_config(policy, config, extra):
+    """Config du run (config.toml + overrides.txt du dossier du run, policy.pt ou ckpt/policy_N.pt), + --set."""
+    for d in (policy.parent, policy.parent.parent):
+        if (d / "config.toml").exists():
+            ov = (d / "overrides.txt").read_text().split() if (d / "overrides.txt").exists() else []
+            return (config or str(d / "config.toml")), (ov if not config else []) + list(extra)
+    return (config or CONFIG), list(extra)
 
+
+def eval_one(policy, a):
     from train.approach import config as cfgmod
     from train.approach.bench import load_setups
-    policy = Path(a.policy)
-    run_cfg = policy.parent / "config.toml"
-    config = a.config or (str(run_cfg) if run_cfg.exists() else CONFIG)
-    cfg = cfgmod.load(config)
+    config, overrides = _run_config(policy, a.config, a.set)
+    cfg = cfgmod.load(config, overrides)
     stages_cfg = cfg["curriculum"]["stages"]
     train_t, hold_t = cfgmod.terrain_split(cfg)
     keep = lambda s: a.stages is None or s in a.stages
-
+    bench = a.bench or cfg["terrains"]["bench"]
     if a.random:
         terrains = hold_t or train_t
-        jobs = [(config, str(policy), terrains, s, [(100_000 * s + 1000 * w + e, None) for e in range(a.episodes)])
+        jobs = [((config, overrides), str(policy), terrains, s,
+                 [(100_000 * s + 1000 * w + e, None) for e in range(a.episodes)])
                 for s in range(len(stages_cfg)) if keep(s) for w in range(a.workers)]
         label = f"départs tirés, {len(terrains)} terrains"
     else:
-        setups = [u for u in load_setups(cfg["terrains"]["bench"], stages_cfg) if keep(u["stage"])]
+        setups = [u for u in load_setups(bench, stages_cfg) if keep(u["stage"])]
         eps = [(10_000 * k + u["index"], u) for k in range(a.repeats) for u in setups]
         terrains = sorted({u["terrain"] for u in setups})
-        jobs = [(config, str(policy), terrains, 0, eps[w::a.workers]) for w in range(a.workers) if eps[w::a.workers]]
-        label = f"benchmark {cfg['terrains']['bench']} : {len(setups)} setups x {a.repeats}"
+        jobs = [((config, overrides), str(policy), terrains, 0, eps[w::a.workers])
+                for w in range(a.workers) if eps[w::a.workers]]
+        label = f"benchmark {bench} : {len(setups)} setups x {a.repeats}"
     with get_context("spawn").Pool(a.workers) as pool:
         rows = [r for chunk in pool.map(_worker, jobs) for r in chunk]
-
-    print(f"policy {policy}\nconfig {config} | {label}")
+    print(f"\npolicy {policy}\nconfig {config} {' '.join(overrides)} | {label}")
     _report(rows, stages_cfg)
-    out = policy.with_name(policy.stem + ("_eval_random.csv" if a.random else "_eval_bench.csv"))
+    out = policy.with_name(policy.stem + ("_eval_random.csv" if a.random else f"_eval_{bench}.csv"))
     with open(out, "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=list(rows[0]))
         w.writeheader()
         w.writerows(rows)
-    print(f"\n{len(rows)} épisodes -> {out}")
+    print(f"{len(rows)} épisodes -> {out}")
+    return sum(r["outcome"] == "success" for r in rows) / len(rows)
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--policy", required=True, nargs="+", help="une ou plusieurs policies (ex. plusieurs checkpoints)")
+    ap.add_argument("--config", default=None, help="défaut : config.toml + overrides.txt du run, sinon config_l1.toml")
+    ap.add_argument("--set", nargs="*", default=[], metavar="section.clé=valeur", help="surcharges en plus")
+    ap.add_argument("--bench", default=None, help="scène de benchmark (défaut : [terrains].bench de la config)")
+    ap.add_argument("--workers", type=int, default=4)
+    ap.add_argument("--repeats", type=int, default=3, help="benchmark : passages par setup")
+    ap.add_argument("--random", action="store_true", help="départs tirés au lieu du benchmark")
+    ap.add_argument("--episodes", type=int, default=10, help="--random : épisodes par étape et par worker")
+    ap.add_argument("--stages", type=int, nargs="*", default=None, help="limiter à ces étapes")
+    a = ap.parse_args()
+    res = [(str(pol), eval_one(Path(pol), a)) for pol in a.policy]
+    if len(res) > 1:
+        print("\n=== synthèse")
+        for pol, r in sorted(res, key=lambda t: -t[1]):
+            print(f"  {r:5.1%}  {pol}")
 
 
 if __name__ == "__main__":
